@@ -46,13 +46,14 @@ export const LogsTable: React.FC<LogsTableProps> = ({ logs, users, onEditUser, o
       <div className="px-6 py-4 border-b border-gray-200">
         <div className="flex items-center justify-between">
           <div className="flex items-center">
-            <FileText className="w-5 h-5 text-gray-400 mr-2" />
-            <h2 className="text-xl font-bold text-gray-900">Access Logs</h2>
+            <FileText className="w-6 h-6 text-gray-400 mr-3" />
+            <h2 className="text-2xl font-bold text-gray-900">ACCESS LOGS</h2>
           </div>
           <div className="text-sm text-gray-500">
             Total: {logs.length} entries
           </div>
         </div>
+        <p className="text-gray-600 mt-1">Complete access history with entry/exit tracking</p>
       </div>
 
       <div className="overflow-x-auto">
@@ -108,8 +109,10 @@ export const LogsTable: React.FC<LogsTableProps> = ({ logs, users, onEditUser, o
                     <div className="text-sm font-medium text-gray-900">
                       {log.user_name || log.name}
                     </div>
-                    {userDetails?.email && (
-                      <div className="text-sm text-gray-500">{userDetails.email}</div>
+                    {(userDetails?.email || (log as any).user_email) && (
+                      <div className="text-sm text-gray-500">
+                        {userDetails?.email || (log as any).user_email}
+                      </div>
                     )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">

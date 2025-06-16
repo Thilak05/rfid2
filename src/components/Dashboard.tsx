@@ -5,6 +5,7 @@ import { RegisterUserCard } from './RegisterUserCard';
 import { LogsTable } from './LogsTable';
 import { ActivityLog } from './ActivityLog';
 import { UserModal } from './UserModal';
+import { UsersTable } from './UsersTable';
 import { User, Log, Stats } from '../types';
 import { usersAPI, logsAPI, statsAPI } from '../services/api';
 
@@ -21,6 +22,7 @@ export const Dashboard: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showUsersTable, setShowUsersTable] = useState(false);
 
   const fetchData = async () => {
     try {
@@ -32,6 +34,7 @@ export const Dashboard: React.FC = () => {
       setUsers(usersData);
       setLogs(logsData);
       setStats(statsData);
+      console.log('Fetched users:', usersData); // Debug log
     } catch (error) {
       console.error('Failed to fetch data:', error);
     } finally {
@@ -106,6 +109,28 @@ export const Dashboard: React.FC = () => {
           <StatsCards stats={stats} />
           <RegisterUserCard onRegister={handleAddUser} />
         </div>
+
+        {/* View Registered Users Button */}
+        <div className="mb-6">
+          <button
+            onClick={() => setShowUsersTable(!showUsersTable)}
+            className="inline-flex items-center px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
+          >
+            {showUsersTable ? 'Hide' : 'View'} Registered Users ({users.length})
+          </button>
+        </div>
+
+        {/* Registered Users Table (Collapsible) */}
+        {showUsersTable && (
+          <div className="mb-8">
+            <UsersTable
+              users={users}
+              onAdd={handleAddUser}
+              onEdit={handleEditUser}
+              onDelete={handleDeleteUser}
+            />
+          </div>
+        )}
 
         {/* Main Content Grid */}
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">

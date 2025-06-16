@@ -9,6 +9,7 @@ import subprocess
 import signal
 import sys
 import atexit
+
 app = Flask(__name__)
 CORS(app)  # Enable CORS for React frontend
 
@@ -50,6 +51,21 @@ def init_db():
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         status TEXT DEFAULT 'active'
     )''')
+
+    # Insert some default users for testing (including the scanned RFID)
+    default_users = [
+        ('Arun Kumar', '0009334653', 'arun@example.com', '+91-9876543210'),
+        ('Thilak Raj', '080058DBB1', 'thilak@example.com', '+91-9876543211'),
+        ('Hari Prasad', '080058DD98', 'hari@example.com', '+91-9876543212'),
+        ('Test User', '080058D9E7', 'test@example.com', '+91-9876543213'),  # The scanned RFID
+    ]
+    
+    for name, rfid, email, phone in default_users:
+        try:
+            c.execute('INSERT OR IGNORE INTO users (name, unique_id, email, phone) VALUES (?, ?, ?, ?)',
+                      (name, rfid, email, phone))
+        except sqlite3.IntegrityError:
+            pass  # User already exists
 
     conn.commit()
     conn.close()
@@ -136,7 +152,7 @@ def delete_user(user_id):
 def get_logs():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('''SELECT l.*, u.name as user_name
+    c.execute('''SELECT l.*, u.name as user_name, u.email as user_email
                  FROM logs l
                  LEFT JOIN users u ON l.unique_id = u.unique_id
                  ORDER BY l.id DESC LIMIT 100''')
@@ -149,7 +165,8 @@ def get_logs():
             'entry_time': row[3],
             'exit_time': row[4],
             'status': row[5],
-            'user_name': row[6] or row[1]
+            'user_name': row[6] or row[1],
+            'user_email': row[7] if len(row) > 7 else None
         })
     conn.close()
     return jsonify(logs)
@@ -190,7 +207,7 @@ def get_stats():
     return jsonify({
         'total_users': total_users,
         'inside_count': inside_count,
-        'outside_count': total_users - inside_count,
+        'outside_count': max(0, total_users - inside_count),
         'today_entries': today_entries,
         'today_exits': today_exits
     })
@@ -214,7 +231,25 @@ def scan():
 
     if not user:
         conn.close()
-        return jsonify({'status': 'error', 'message': 'User not registered or inactive'}), 403
+        # Auto-register unknown users with a default name
+        print(f"Auto-registering unknown RFID: {unique_id}")
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute('INSERT INTO users (name, unique_id, email, phone) VALUES (?, ?, ?, ?)',
+                      (name, unique_id, '', ''))
+            conn.commit()
+            conn.close()
+            print(f"Successfully registered user: {name} with RFID: {unique_id}")
+        except Exception as e:
+            print(f"Failed to auto-register user: {e}")
+            return jsonify({'status': 'error', 'message': 'User not registered and auto-registration failed'}), 403
+        
+        # Re-fetch the user after registration
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute('SELECT name FROM users WHERE unique_id=? AND status="active"', (unique_id,))
+        user = c.fetchone()
 
     if action == 'entry':
         # Check if user is already inside
@@ -346,13 +381,20 @@ def get_rfid_status():
     """Get the current RFID scan status"""
     global latest_rfid_scan
     return jsonify(latest_rfid_scan)
-reader_proc = subprocess.Popen([sys.executable, 'rfid_reader.py'])
-sender_proc = subprocess.Popen([sys.executable, 'rfid_sender.py'])
+
+# Start RFID reader and sender processes
+try:
+    reader_proc = subprocess.Popen([sys.executable, 'rfid_reader.py'])
+    sender_proc = subprocess.Popen([sys.executable, 'rfid_sender.py'])
+except Exception as e:
+    print(f"Warning: Could not start RFID processes: {e}")
+    reader_proc = None
+    sender_proc = None
 
 def cleanup():
     print("Terminating RFID subprocesses...")
     for proc in [reader_proc, sender_proc]:
-        if proc.poll() is None:  # If still running
+        if proc and proc.poll() is None:  # If still running
             proc.terminate()
             try:
                 proc.wait(timeout=5)
@@ -368,7 +410,16 @@ if __name__ == '__main__':
     print(f"Frontend URL: http://{network_ip}:5173")
     print(f"Backend API: http://{network_ip}:5000")
     print(f"Database: {DB_PATH}")
+    
+    # Print registered users for debugging
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('SELECT name, unique_id FROM users')
+    users = c.fetchall()
+    print(f"Registered users: {users}")
+    conn.close()
+    
     try:
-       app.run(debug=True,host='0.0.0.0',port=5000)
+        app.run(debug=True, host='0.0.0.0', port=5000)
     except KeyboardInterrupt:
         pass  # Allow atexit to handle cleanup
