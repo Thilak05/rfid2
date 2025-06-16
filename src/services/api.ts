@@ -18,6 +18,7 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  timeout: 30000, // 30 second timeout for RFID operations
 });
 
 export interface User {
@@ -86,6 +87,11 @@ export const statsAPI = {
 export const rfidAPI = {
   read: async (): Promise<{ status: string; rfid_id?: string; message: string }> => {
     const response = await api.post('/rfid/read');
+    return response.data;
+  },
+
+  getStatus: async (): Promise<{ rfid_id?: string; timestamp?: number; status: string }> => {
+    const response = await api.get('/rfid/status');
     return response.data;
   },
 };

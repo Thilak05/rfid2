@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, User, Mail, Phone, CreditCard, Loader, CheckCircle, AlertCircle } from 'lucide-react';
+import { X, User, Mail, Phone, CreditCard, Loader, CheckCircle, AlertCircle, Wifi } from 'lucide-react';
 import { User as UserType } from '../types';
 import { rfidAPI } from '../services/api';
 
@@ -21,6 +21,7 @@ export const UserModal: React.FC<UserModalProps> = ({ user, onSave, onClose }) =
   const [scanStatus, setScanStatus] = useState<'idle' | 'success' | 'error' | 'timeout'>('idle');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [scanMessage, setScanMessage] = useState('');
 
   useEffect(() => {
     if (user) {
@@ -52,6 +53,7 @@ export const UserModal: React.FC<UserModalProps> = ({ user, onSave, onClose }) =
     setIsScanning(true);
     setScanStatus('idle');
     setError('');
+    setScanMessage('Please scan your RFID card now...');
 
     try {
       const result = await rfidAPI.read();
@@ -59,15 +61,20 @@ export const UserModal: React.FC<UserModalProps> = ({ user, onSave, onClose }) =
       if (result.status === 'success' && result.rfid_id) {
         setFormData({ ...formData, unique_id: result.rfid_id });
         setScanStatus('success');
+        setScanMessage(`RFID captured: ${result.rfid_id}`);
       } else if (result.status === 'timeout') {
         setScanStatus('timeout');
+        setScanMessage('Scan timeout. Please try again.');
       } else {
         setScanStatus('error');
+        setScanMessage(result.message || 'Failed to scan RFID');
         setError(result.message);
       }
     } catch (err: any) {
       setScanStatus('error');
-      setError(err.response?.data?.message || 'Failed to read RFID');
+      const errorMsg = err.response?.data?.message || 'Failed to read RFID';
+      setScanMessage(errorMsg);
+      setError(errorMsg);
     } finally {
       setIsScanning(false);
     }
@@ -77,6 +84,21 @@ export const UserModal: React.FC<UserModalProps> = ({ user, onSave, onClose }) =
     const rfid = Math.random().toString(16).substr(2, 10).toUpperCase();
     setFormData({ ...formData, unique_id: rfid });
     setScanStatus('idle');
+    setScanMessage('');
+  };
+
+  const getScanButtonColor = () => {
+    if (isScanning) return 'bg-yellow-600 hover:bg-yellow-700';
+    if (scanStatus === 'success') return 'bg-green-600 hover:bg-green-700';
+    if (scanStatus === 'error') return 'bg-red-600 hover:bg-red-700';
+    return 'bg-blue-600 hover:bg-blue-700';
+  };
+
+  const getScanButtonIcon = () => {
+    if (isScanning) return <Loader className="w-4 h-4 mr-2 animate-spin" />;
+    if (scanStatus === 'success') return <CheckCircle className="w-4 h-4 mr-2" />;
+    if (scanStatus === 'error') return <AlertCircle className="w-4 h-4 mr-2" />;
+    return <Wifi className="w-4 h-4 mr-2" />;
   };
 
   return (
@@ -123,7 +145,7 @@ export const UserModal: React.FC<UserModalProps> = ({ user, onSave, onClose }) =
                   type="text"
                   value={formData.unique_id}
                   onChange={(e) => setFormData({ ...formData, unique_id: e.target.value })}
-                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors font-mono"
+                  className="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors font-mono text-sm"
                   placeholder="Scan or enter RFID ID"
                   required
                 />
@@ -140,19 +162,10 @@ export const UserModal: React.FC<UserModalProps> = ({ user, onSave, onClose }) =
                   type="button"
                   onClick={handleScanRFID}
                   disabled={isScanning}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
+                  className={`flex-1 px-4 py-2 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center ${getScanButtonColor()}`}
                 >
-                  {isScanning ? (
-                    <>
-                      <Loader className="w-4 h-4 mr-2 animate-spin" />
-                      Scanning...
-                    </>
-                  ) : (
-                    <>
-                      <CreditCard className="w-4 h-4 mr-2" />
-                      Scan RFID
-                    </>
-                  )}
+                  {getScanButtonIcon()}
+                  {isScanning ? 'Scanning...' : 'Scan RFID'}
                 </button>
                 <button
                   type="button"
@@ -163,15 +176,27 @@ export const UserModal: React.FC<UserModalProps> = ({ user, onSave, onClose }) =
                 </button>
               </div>
 
-              {scanStatus === 'timeout' && (
-                <p className="text-sm text-yellow-600">
-                  No RFID detected. Please try again or enter manually.
-                </p>
+              {scanMessage && (
+                <div className={`text-sm p-3 rounded-lg ${
+                  scanStatus === 'success' ? 'bg-green-50 text-green-700' :
+                  scanStatus === 'error' ? 'bg-red-50 text-red-700' :
+                  scanStatus === 'timeout' ? 'bg-yellow-50 text-yellow-700' :
+                  'bg-blue-50 text-blue-700'
+                }`}>
+                  {scanMessage}
+                </div>
               )}
-              {scanStatus === 'success' && (
-                <p className="text-sm text-green-600">
-                  RFID scanned successfully!
-                </p>
+
+              {isScanning && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <div className="flex items-center">
+                    <Loader className="w-5 h-5 text-blue-600 animate-spin mr-3" />
+                    <div>
+                      <p className="text-sm font-medium text-blue-800">Scanning for RFID...</p>
+                      <p className="text-xs text-blue-600">Please place your RFID card near the reader</p>
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
           </div>
@@ -223,8 +248,11 @@ export const UserModal: React.FC<UserModalProps> = ({ user, onSave, onClose }) =
           </div>
 
           {error && (
-            <div className="text-red-600 text-sm bg-red-50 py-2 px-4 rounded-lg">
-              {error}
+            <div className="text-red-600 text-sm bg-red-50 py-3 px-4 rounded-lg border border-red-200">
+              <div className="flex items-center">
+                <AlertCircle className="w-4 h-4 mr-2" />
+                {error}
+              </div>
             </div>
           )}
 
@@ -238,7 +266,7 @@ export const UserModal: React.FC<UserModalProps> = ({ user, onSave, onClose }) =
             </button>
             <button
               type="submit"
-              disabled={saving}
+              disabled={saving || isScanning}
               className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
             >
               {saving ? (

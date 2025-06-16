@@ -53,6 +53,9 @@ def init_db():
 
 init_db()
 
+# Global variable to store the latest scanned RFID
+latest_rfid_scan = {'rfid_id': None, 'timestamp': None, 'status': 'idle'}
+
 # API Routes
 @app.route('/api/users', methods=['GET'])
 def get_users():
@@ -248,43 +251,98 @@ def scan():
 @app.route('/api/rfid/read', methods=['POST'])
 def read_rfid():
     """Endpoint to trigger RFID reading for registration"""
+    global latest_rfid_scan
+    
     try:
         import serial
         import serial.tools.list_ports
         
-        # Try to find RFID reader on ttyUSB0
-        try:
-            ser = serial.Serial('/dev/ttyUSB0', 9600, timeout=2)
-            print("Waiting for RFID scan...")
-            
-            # Wait for RFID data (with timeout)
-            start_time = time.time()
-            while time.time() - start_time < 10:  # 10 second timeout
-                if ser.in_waiting:
-                    rfid_data = ser.readline().decode('utf-8', errors='ignore').strip()
-                    if rfid_data:
-                        ser.close()
-                        return jsonify({
-                            'status': 'success', 
-                            'rfid_id': rfid_data,
-                            'message': 'RFID scanned successfully'
-                        })
-                time.sleep(0.1)
-            
-            ser.close()
-            return jsonify({'status': 'timeout', 'message': 'No RFID detected within 10 seconds'}), 408
-            
-        except serial.SerialException as e:
+        # Reset the scan status
+        latest_rfid_scan = {'rfid_id': None, 'timestamp': time.time(), 'status': 'scanning'}
+        
+        # Try to find RFID reader on common ports
+        possible_ports = ['/dev/ttyUSB0', '/dev/ttyUSB1', '/dev/ttyS0', '/dev/ttyAMA0']
+        ser = None
+        
+        for port in possible_ports:
+            try:
+                ser = serial.Serial(port, 9600, timeout=1)
+                print(f"Connected to RFID reader on {port}")
+                break
+            except serial.SerialException:
+                continue
+        
+        if not ser:
+            latest_rfid_scan['status'] = 'error'
             return jsonify({
                 'status': 'error', 
-                'message': f'RFID reader not found on /dev/ttyUSB0: {str(e)}'
+                'message': 'RFID reader not found on any port'
             }), 500
+        
+        print("Waiting for RFID scan...")
+        
+        # Wait for RFID data (with timeout)
+        start_time = time.time()
+        rfid_data = None
+        
+        while time.time() - start_time < 15:  # 15 second timeout
+            try:
+                if ser.in_waiting > 0:
+                    raw_data = ser.readline()
+                    if raw_data:
+                        # Try to decode the data
+                        try:
+                            rfid_data = raw_data.decode('utf-8', errors='ignore').strip()
+                        except:
+                            rfid_data = raw_data.decode('ascii', errors='ignore').strip()
+                        
+                        # Clean the RFID data
+                        rfid_data = ''.join(c for c in rfid_data if c.isalnum())
+                        
+                        if rfid_data and len(rfid_data) >= 8:  # Valid RFID should be at least 8 characters
+                            latest_rfid_scan = {
+                                'rfid_id': rfid_data,
+                                'timestamp': time.time(),
+                                'status': 'success'
+                            }
+                            ser.close()
+                            print(f"RFID scanned successfully: {rfid_data}")
+                            return jsonify({
+                                'status': 'success', 
+                                'rfid_id': rfid_data,
+                                'message': 'RFID scanned successfully'
+                            })
+            except Exception as e:
+                print(f"Error reading from serial: {e}")
+                continue
+            
+            time.sleep(0.1)
+        
+        ser.close()
+        latest_rfid_scan['status'] = 'timeout'
+        return jsonify({
+            'status': 'timeout', 
+            'message': 'No RFID detected within 15 seconds. Please try again.'
+        }), 408
             
     except ImportError:
+        latest_rfid_scan['status'] = 'error'
         return jsonify({
             'status': 'error', 
-            'message': 'Serial library not available. Install pyserial.'
+            'message': 'Serial library not available. Install pyserial: pip install pyserial'
         }), 500
+    except Exception as e:
+        latest_rfid_scan['status'] = 'error'
+        return jsonify({
+            'status': 'error', 
+            'message': f'Unexpected error: {str(e)}'
+        }), 500
+
+@app.route('/api/rfid/status', methods=['GET'])
+def get_rfid_status():
+    """Get the current RFID scan status"""
+    global latest_rfid_scan
+    return jsonify(latest_rfid_scan)
 
 if __name__ == '__main__':
     network_ip = get_network_ip()
