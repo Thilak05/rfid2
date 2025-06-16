@@ -1,5 +1,5 @@
 import React from 'react';
-import { Users, UserCheck, LogIn, LogOut, Activity } from 'lucide-react';
+import { Users, UserCheck, LogIn, LogOut } from 'lucide-react';
 import { Stats } from '../types';
 
 interface StatsCardsProps {
@@ -33,18 +33,17 @@ export const StatsCards: React.FC<StatsCardsProps> = ({ stats }) => {
       textColor: 'text-orange-600',
     },
     {
-      title: 'Today\'s Activity',
-      value: stats.today_entries + stats.today_exits,
-      icon: Activity,
+      title: 'Today\'s Entries',
+      value: stats.today_entries,
+      icon: UserCheck,
       color: 'bg-purple-500',
       bgColor: 'bg-purple-50',
       textColor: 'text-purple-600',
-      subtitle: `${stats.today_entries} entries, ${stats.today_exits} exits`,
     },
   ];
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+    <>
       {cards.map((card, index) => (
         <div
           key={index}
@@ -57,13 +56,10 @@ export const StatsCards: React.FC<StatsCardsProps> = ({ stats }) => {
             <div className="ml-4 flex-1">
               <p className="text-sm font-medium text-gray-600">{card.title}</p>
               <p className="text-2xl font-bold text-gray-900">{card.value}</p>
-              {card.subtitle && (
-                <p className="text-xs text-gray-500 mt-1">{card.subtitle}</p>
-              )}
             </div>
           </div>
         </div>
       ))}
-    </div>
+    </>
   );
 };

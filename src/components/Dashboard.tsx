@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Header } from './Header';
 import { StatsCards } from './StatsCards';
-import { UsersTable } from './UsersTable';
+import { RegisterUserCard } from './RegisterUserCard';
+import { LogsTable } from './LogsTable';
 import { ActivityLog } from './ActivityLog';
 import { UserModal } from './UserModal';
 import { User, Log, Stats } from '../types';
@@ -100,18 +101,25 @@ export const Dashboard: React.FC = () => {
           <p className="text-gray-600 mt-2">Real-time monitoring and user management</p>
         </div>
 
-        <StatsCards stats={stats} />
+        {/* Stats Cards Row */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
+          <StatsCards stats={stats} />
+          <RegisterUserCard onRegister={handleAddUser} />
+        </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-8 mt-8">
+        {/* Main Content Grid */}
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+          {/* Logs Table - Takes 2 columns */}
           <div className="xl:col-span-2">
-            <UsersTable
+            <LogsTable 
+              logs={logs} 
               users={users}
-              onAdd={handleAddUser}
-              onEdit={handleEditUser}
-              onDelete={handleDeleteUser}
+              onEditUser={handleEditUser}
+              onDeleteUser={handleDeleteUser}
             />
           </div>
           
+          {/* Activity Log - Takes 1 column */}
           <div className="xl:col-span-1">
             <ActivityLog logs={logs} />
           </div>

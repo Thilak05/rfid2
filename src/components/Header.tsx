@@ -1,8 +1,10 @@
 import React from 'react';
-import { Shield, Wifi } from 'lucide-react';
+import { Shield, Wifi, LogOut, User } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 
 export const Header: React.FC = () => {
   const networkIP = window.location.hostname;
+  const { user, logout } = useAuth();
   
   return (
     <header className="bg-white shadow-sm border-b border-gray-200">
@@ -19,6 +21,20 @@ export const Header: React.FC = () => {
               <span>Connected to {networkIP}</span>
             </div>
             <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse" title="Live monitoring active"></div>
+            
+            <div className="flex items-center space-x-3 pl-4 border-l border-gray-200">
+              <div className="flex items-center text-sm text-gray-700">
+                <User className="w-4 h-4 mr-2" />
+                <span>{user?.username}</span>
+              </div>
+              <button
+                onClick={logout}
+                className="flex items-center text-sm text-gray-600 hover:text-red-600 transition-colors"
+                title="Logout"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
       </div>

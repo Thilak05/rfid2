@@ -1,5 +1,4 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { authAPI } from '../services/api';
 
 interface User {
   id: string;
@@ -32,32 +31,37 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (token) {
-      // Verify token is still valid
-      authAPI.verifyToken()
-        .then((userData) => {
-          setUser(userData);
-        })
-        .catch(() => {
-          localStorage.removeItem('token');
-        })
-        .finally(() => {
-          setLoading(false);
-        });
-    } else {
-      setLoading(false);
+    const token = localStorage.getItem('rfid_token');
+    const userData = localStorage.getItem('rfid_user');
+    
+    if (token && userData) {
+      try {
+        setUser(JSON.parse(userData));
+      } catch (error) {
+        localStorage.removeItem('rfid_token');
+        localStorage.removeItem('rfid_user');
+      }
     }
+    setLoading(false);
   }, []);
 
   const login = async (username: string, password: string) => {
-    const { user: userData, token } = await authAPI.login(username, password);
-    localStorage.setItem('token', token);
-    setUser(userData);
+    // Fixed credentials for demo
+    if (username === 'admin' && password === 'admin123') {
+      const userData = { id: '1', username: 'admin' };
+      const token = 'demo_jwt_token_' + Date.now();
+      
+      localStorage.setItem('rfid_token', token);
+      localStorage.setItem('rfid_user', JSON.stringify(userData));
+      setUser(userData);
+    } else {
+      throw new Error('Invalid credentials');
+    }
   };
 
   const logout = () => {
-    localStorage.removeItem('token');
+    localStorage.removeItem('rfid_token');
+    localStorage.removeItem('rfid_user');
     setUser(null);
   };
 
