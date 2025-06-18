@@ -18,7 +18,6 @@ DB_PATH = 'rfid_log.db'
 def get_network_ip():
     """Get the network IP address of the machine"""
     try:
-        # Connect to a remote server to determine local IP
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
@@ -52,30 +51,13 @@ def init_db():
         status TEXT DEFAULT 'active'
     )''')
 
-    # Insert some default users for testing (including the scanned RFID)
-    default_users = [
-        ('Arun Kumar', '0009334653', 'arun@example.com', '+91-9876543210'),
-        ('Thilak Raj', '080058DBB1', 'thilak@example.com', '+91-9876543211'),
-        ('Hari Prasad', '080058DD98', 'hari@example.com', '+91-9876543212'),
-        ('Test User', '080058D9E7', 'test@example.com', '+91-9876543213'),  # The scanned RFID
-    ]
-    
-    for name, rfid, email, phone in default_users:
-        try:
-            c.execute('INSERT OR IGNORE INTO users (name, unique_id, email, phone) VALUES (?, ?, ?, ?)',
-                      (name, rfid, email, phone))
-        except sqlite3.IntegrityError:
-            pass  # User already exists
-
     conn.commit()
     conn.close()
 
 init_db()
 
-# Global variable to store the latest scanned RFID
 latest_rfid_scan = {'rfid_id': None, 'timestamp': None, 'status': 'idle'}
 
-# API Routes
 @app.route('/api/users', methods=['GET'])
 def get_users():
     conn = sqlite3.connect(DB_PATH)
@@ -176,11 +158,9 @@ def get_stats():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
-    # Total registered users
     c.execute('SELECT COUNT(*) FROM users WHERE status="active"')
     total_users = c.fetchone()[0]
 
-    # Currently inside (entries without exits)
     c.execute('''SELECT COUNT(DISTINCT unique_id) FROM logs
                  WHERE unique_id IN (
                      SELECT unique_id FROM logs
@@ -193,12 +173,10 @@ def get_stats():
                  )''')
     inside_count = c.fetchone()[0]
 
-    # Today's entries
     today = datetime.now().strftime('%Y-%m-%d')
     c.execute('SELECT COUNT(*) FROM logs WHERE entry_time LIKE ?', (f'{today}%',))
     today_entries = c.fetchone()[0]
 
-    # Today's exits
     c.execute('SELECT COUNT(*) FROM logs WHERE exit_time LIKE ?', (f'{today}%',))
     today_exits = c.fetchone()[0]
 
@@ -217,7 +195,7 @@ def scan():
     data = request.json
     name = data.get('name')
     unique_id = data.get('unique_id')
-    action = data.get('action')  # 'entry' or 'exit'
+    action = data.get('action')
 
     if not name or not unique_id or action not in ['entry', 'exit']:
         return jsonify({'status': 'error', 'message': 'Invalid data'}), 400
@@ -225,13 +203,11 @@ def scan():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
-    # Check if user exists in users table
     c.execute('SELECT name FROM users WHERE unique_id=? AND status="active"', (unique_id,))
     user = c.fetchone()
 
     if not user:
         conn.close()
-        # Auto-register unknown users with a default name
         print(f"Auto-registering unknown RFID: {unique_id}")
         try:
             conn = sqlite3.connect(DB_PATH)
@@ -245,14 +221,12 @@ def scan():
             print(f"Failed to auto-register user: {e}")
             return jsonify({'status': 'error', 'message': 'User not registered and auto-registration failed'}), 403
         
-        # Re-fetch the user after registration
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute('SELECT name FROM users WHERE unique_id=? AND status="active"', (unique_id,))
         user = c.fetchone()
 
     if action == 'entry':
-        # Check if user is already inside
         c.execute('''SELECT id FROM logs WHERE unique_id=? AND entry_time IS NOT NULL
                      AND (exit_time IS NULL OR exit_time < entry_time)
                      ORDER BY id DESC LIMIT 1''', (unique_id,))
@@ -262,7 +236,6 @@ def scan():
             conn.close()
             return jsonify({'status': 'error', 'message': 'User already inside'}), 400
 
-        # Log entry
         c.execute('INSERT INTO logs (name, unique_id, entry_time, status) VALUES (?, ?, ?, ?)',
                   (user[0], unique_id, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), 'inside'))
         conn.commit()
@@ -270,7 +243,6 @@ def scan():
         return jsonify({'status': 'success', 'message': 'Entry logged', 'user_name': user[0]})
 
     elif action == 'exit':
-        # Find the latest entry without exit
         c.execute('''SELECT id FROM logs WHERE unique_id=? AND entry_time IS NOT NULL
                      AND (exit_time IS NULL OR exit_time < entry_time)
                      ORDER BY id DESC LIMIT 1''', (unique_id,))
@@ -288,17 +260,14 @@ def scan():
 
 @app.route('/api/rfid/read', methods=['POST'])
 def read_rfid():
-    """Endpoint to trigger RFID reading for registration"""
     global latest_rfid_scan
 
     try:
         import serial
         import serial.tools.list_ports
 
-        # Reset the scan status
         latest_rfid_scan = {'rfid_id': None, 'timestamp': time.time(), 'status': 'scanning'}
 
-        # Try to find RFID reader on common ports
         possible_ports = ['/dev/ttyUSB0', '/dev/ttyUSB1', '/dev/ttyS0', '/dev/ttyAMA0']
         ser = None
 
@@ -312,32 +281,25 @@ def read_rfid():
 
         if not ser:
             latest_rfid_scan['status'] = 'error'
-            return jsonify({
-                'status': 'error',
-                'message': 'RFID reader not found on any port'
-            }), 500
+            return jsonify({'status': 'error', 'message': 'RFID reader not found on any port'}), 500
 
         print("Waiting for RFID scan...")
-
-        # Wait for RFID data (with timeout)
         start_time = time.time()
         rfid_data = None
 
-        while time.time() - start_time < 15:  # 15 second timeout
+        while time.time() - start_time < 15:
             try:
                 if ser.in_waiting > 0:
                     raw_data = ser.readline()
                     if raw_data:
-                        # Try to decode the data
                         try:
                             rfid_data = raw_data.decode('utf-8', errors='ignore').strip()
                         except:
                             rfid_data = raw_data.decode('ascii', errors='ignore').strip()
 
-                        # Clean the RFID data
                         rfid_data = ''.join(c for c in rfid_data if c.isalnum())
 
-                        if rfid_data and len(rfid_data) >= 8:  # Valid RFID should be at least 8 characters
+                        if rfid_data and len(rfid_data) >= 8:
                             latest_rfid_scan = {
                                 'rfid_id': rfid_data,
                                 'timestamp': time.time(),
@@ -378,11 +340,9 @@ def read_rfid():
 
 @app.route('/api/rfid/status', methods=['GET'])
 def get_rfid_status():
-    """Get the current RFID scan status"""
     global latest_rfid_scan
     return jsonify(latest_rfid_scan)
 
-# Start RFID reader and sender processes
 try:
     reader_proc = subprocess.Popen([sys.executable, 'rfid_reader.py'])
     sender_proc = subprocess.Popen([sys.executable, 'rfid_sender.py'])
@@ -394,7 +354,7 @@ except Exception as e:
 def cleanup():
     print("Terminating RFID subprocesses...")
     for proc in [reader_proc, sender_proc]:
-        if proc and proc.poll() is None:  # If still running
+        if proc and proc.poll() is None:
             proc.terminate()
             try:
                 proc.wait(timeout=5)
@@ -410,16 +370,15 @@ if __name__ == '__main__':
     print(f"Frontend URL: http://{network_ip}:5173")
     print(f"Backend API: http://{network_ip}:5000")
     print(f"Database: {DB_PATH}")
-    
-    # Print registered users for debugging
+
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('SELECT name, unique_id FROM users')
     users = c.fetchall()
     print(f"Registered users: {users}")
     conn.close()
-    
+
     try:
         app.run(debug=True, host='0.0.0.0', port=5000)
     except KeyboardInterrupt:
-        pass  # Allow atexit to handle cleanup
+        pass
