@@ -190,41 +190,54 @@ def get_stats():
         'today_exits': today_exits
     })
 
+@app.route('/api/validate_user', methods=['POST'])
+def validate_user():
+    """Validate if a user exists and is active"""
+    data = request.json
+    unique_id = data.get('unique_id')
+    
+    if not unique_id:
+        return jsonify({'status': 'error', 'message': 'RFID ID is required'}), 400
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('SELECT id, name, status FROM users WHERE unique_id=?', (unique_id,))
+    user = c.fetchone()
+    conn.close()
+    
+    if not user:
+        return jsonify({'status': 'error', 'message': 'Access Denied: User not registered', 'access_granted': False}), 403
+    
+    if user[2] != 'active':
+        return jsonify({'status': 'error', 'message': 'Access Denied: User account is inactive', 'access_granted': False}), 403
+    
+    return jsonify({
+        'status': 'success', 
+        'message': 'Access Granted', 
+        'user_id': user[0],
+        'name': user[1],
+        'access_granted': True
+    })
+
 @app.route('/scan', methods=['POST'])
 def scan():
     data = request.json
-    name = data.get('name')
     unique_id = data.get('unique_id')
     action = data.get('action')
 
-    if not name or not unique_id or action not in ['entry', 'exit']:
+    if not unique_id or action not in ['entry', 'exit']:
         return jsonify({'status': 'error', 'message': 'Invalid data'}), 400
 
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
+    # Validate user exists and is active
     c.execute('SELECT name FROM users WHERE unique_id=? AND status="active"', (unique_id,))
     user = c.fetchone()
 
     if not user:
         conn.close()
-        print(f"Auto-registering unknown RFID: {unique_id}")
-        try:
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            c.execute('INSERT INTO users (name, unique_id, email, phone) VALUES (?, ?, ?, ?)',
-                      (name, unique_id, '', ''))
-            conn.commit()
-            conn.close()
-            print(f"Successfully registered user: {name} with RFID: {unique_id}")
-        except Exception as e:
-            print(f"Failed to auto-register user: {e}")
-            return jsonify({'status': 'error', 'message': 'User not registered and auto-registration failed'}), 403
-        
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute('SELECT name FROM users WHERE unique_id=? AND status="active"', (unique_id,))
-        user = c.fetchone()
+        return jsonify({'status': 'error', 'message': 'Access Denied: User not registered'}), 403
 
     if action == 'entry':
         c.execute('''SELECT id FROM logs WHERE unique_id=? AND entry_time IS NOT NULL

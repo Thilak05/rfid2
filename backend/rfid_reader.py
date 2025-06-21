@@ -6,27 +6,54 @@ import time
 # Update the serial port to match Raspberry Pi environment
 SERIAL_PORT = '/dev/ttyUSB0'  # Use /dev/ttyAMA0 if needed
 BAUD_RATE = 9600
-FLASK_URL = 'http://127.0.0.1:5000/scan'
-
-USER_MAP = {
-    '0009334653': 'Arun',
-    '080058DBB1': 'Thilak',
-    '080058DD98': 'Hari',
-}
+FLASK_URL = 'http://127.0.0.1:5000'
 
 def list_available_ports():
     """List all available serial ports"""
     ports = serial.tools.list_ports.comports()
     return [port.device for port in ports]
 
-def send_scan(unique_id):
-    name = USER_MAP.get(unique_id, 'Unknown')
-    data = {'name': name, 'unique_id': unique_id, 'action': 'exit'}
+def validate_user(unique_id):
+    """Validate user with the database"""
+    data = {'unique_id': unique_id}
     try:
-        response = requests.post(FLASK_URL, json=data)
-        print(f"Sent to Flask: {data} → Response: {response.status_code} - {response.text}")
+        response = requests.post(f'{FLASK_URL}/api/validate_user', json=data)
+        if response.status_code == 200:
+            result = response.json()
+            return result.get('access_granted', False), result.get('name', 'Unknown'), result.get('message', '')
+        else:
+            result = response.json()
+            return False, 'Unknown', result.get('message', 'Access Denied')
     except requests.exceptions.RequestException as e:
-        print(f"Error sending data to Flask server: {e}")
+        print(f"Error validating user: {e}")
+        return False, 'Unknown', 'Server connection error'
+
+def send_scan(unique_id):
+    """Send scan data to Flask server after validation"""
+    # First validate the user
+    access_granted, name, message = validate_user(unique_id)
+    
+    if not access_granted:
+        print(f"Access Denied for RFID {unique_id}: {message}")
+        return False
+    
+    print(f"Access Granted for {name} (RFID: {unique_id})")
+    
+    # Send the exit scan
+    data = {'unique_id': unique_id, 'action': 'exit'}
+    try:
+        response = requests.post(f'{FLASK_URL}/scan', json=data)
+        if response.status_code == 200:
+            result = response.json()
+            print(f"Exit logged successfully: {result.get('message', '')}")
+            return True
+        else:
+            result = response.json()
+            print(f"Exit failed: {result.get('message', '')}")
+            return False
+    except requests.exceptions.RequestException as e:
+        print(f"Error sending scan to Flask server: {e}")
+        return False
 
 def main():
     # List available ports
@@ -44,16 +71,18 @@ def main():
         print(f"Connected to {SERIAL_PORT}")
     except serial.SerialException as e:
         print(f"Connection failed: {e}")
-        return
-
-    print("Listening for RFID scans... (action='exit')")
+        return    print("Listening for RFID scans... (action='exit')")
     try:
         while True:
             if ser.in_waiting:
                 rfid_data = ser.readline().decode('utf-8').strip()
                 if rfid_data:
                     print(f"Scanned RFID: {rfid_data}")
-                    send_scan(rfid_data)
+                    success = send_scan(rfid_data)
+                    if success:
+                        print("✓ Exit processed successfully")
+                    else:
+                        print("✗ Exit processing failed")
             time.sleep(0.1)
     except KeyboardInterrupt:
         print("\nStopped by user.")
