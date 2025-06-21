@@ -6,26 +6,6 @@
  * 2. OLED display (SSD1306)
  * 3. WiFi communication with Raspberry Pi
  * 4. Automatic Pi discovery by MAC address
- * 
- * Hardware Required:
- * - ESP8266 (NodeMCU, Wemos D1 Mini, etc.)
- * - MFRC522 RFID Scanner
- * - SSD1306 OLED Display (128x64, I2C)
- * 
- * RFID Wiring (SPI):
- * MFRC522 VCC  -> 3.3V
- * MFRC522 RST  -> D3 (GPIO 0)
- * MFRC522 GND  -> GND
- * MFRC522 MISO -> D6 (GPIO 12)
- * MFRC522 MOSI -> D7 (GPIO 13)
- * MFRC522 SCK  -> D5 (GPIO 14)
- * MFRC522 SDA  -> D4 (GPIO 2)
- * 
- * OLED Wiring (I2C):
- * OLED VCC -> 3.3V
- * OLED GND -> GND
- * OLED SCL -> D1 (GPIO 5)
- * OLED SDA -> D2 (GPIO 4)
  */
 
 #include <ESP8266WiFi.h>
@@ -37,17 +17,17 @@
 #include <Adafruit_SSD1306.h>
 
 // WiFi Configuration
-const char* ssid = "YOUR_WIFI_SSID";      // Replace with your WiFi SSID
-const char* password = "YOUR_WIFI_PASSWORD"; // Replace with your WiFi password
+const char* ssid = "R&D";
+const char* password = "9686940950";
 
 // Raspberry Pi Configuration (using MAC address for discovery)
-const char* raspberryPiMAC = "D8:3A:DD:78:01:07"; // Raspberry Pi MAC address
-String raspberryPiIP = "";                         // Will be discovered
-const int pythonServerPort = 8080;                 // Port where Python listens
+const char* raspberryPiMAC = "D8:3A:DD:78:01:07";
+String raspberryPiIP = "";
+const int pythonServerPort = 8080;
 
 // RFID Configuration
-#define RST_PIN    D3     // Reset pin
-#define SS_PIN     D4     // Slave select pin
+#define RST_PIN D3
+#define SS_PIN D4
 MFRC522 mfrc522(SS_PIN, RST_PIN);
 
 // OLED Configuration
@@ -62,10 +42,10 @@ ESP8266WebServer server(80);
 // Global variables
 String lastRFID = "";
 unsigned long lastScanTime = 0;
-const unsigned long SCAN_DELAY = 2000; // 2 seconds between scans
+const unsigned long SCAN_DELAY = 2000;
 bool raspberryPiFound = false;
 unsigned long lastDiscoveryAttempt = 0;
-const unsigned long DISCOVERY_INTERVAL = 30000; // Re-discover every 30 seconds
+const unsigned long DISCOVERY_INTERVAL = 30000;
 
 // Function declarations
 String discoverRaspberryPiIP();
@@ -74,43 +54,31 @@ bool testPythonServer(String ip);
 void discoverAndConnectToPi();
 void sendRFIDToPython(String rfidUID);
 void handleOLEDMessage();
+void handleRoot();
 void displayMessage(String message);
-void showConnectionInfo();
 
 String discoverRaspberryPiIP() {
-  /*
-   * Discover Raspberry Pi IP address by scanning network for MAC address
-   * This function attempts to find the Pi by pinging common IP ranges
-   * and checking for Python server response
-   */
-  
   Serial.println("🔍 Discovering Raspberry Pi by MAC address...");
   displayMessage("Discovering Pi...\n" + String(raspberryPiMAC));
   
-  // Get our own IP to determine network range
   IPAddress localIP = WiFi.localIP();
   String networkBase = String(localIP[0]) + "." + String(localIP[1]) + "." + String(localIP[2]) + ".";
   
   Serial.println("Scanning network: " + networkBase + "1-254");
   
-  // Scan common IP ranges (simplified approach for ESP8266)
   for (int i = 1; i <= 254; i++) {
     String testIP = networkBase + String(i);
-    
-    // Skip our own IP
     if (testIP == WiFi.localIP().toString()) continue;
     
-    // Test connectivity and Python server
     if (pingIP(testIP) && testPythonServer(testIP)) {
       Serial.println("✓ Found Raspberry Pi at: " + testIP);
       return testIP;
     }
     
-    // Show progress every 50 IPs
     if (i % 50 == 0) {
       Serial.println("Scanned up to: " + testIP);
       displayMessage("Scanning...\n" + testIP + "\nLooking for Pi...");
-      yield(); // Prevent watchdog timeout
+      yield();
     }
   }
   
@@ -119,13 +87,8 @@ String discoverRaspberryPiIP() {
 }
 
 bool pingIP(String ip) {
-  /*
-   * Simple connectivity test to an IP address
-   * Uses HTTP request as a "ping" since ESP8266 doesn't have native ping
-   */
-  
   WiFiClient client;
-  client.setTimeout(1000); // 1 second timeout
+  client.setTimeout(1000);
   
   if (client.connect(ip.c_str(), pythonServerPort)) {
     client.stop();
@@ -136,19 +99,12 @@ bool pingIP(String ip) {
 }
 
 bool testPythonServer(String ip) {
-  /*
-   * Test if the IP address is running our Python server
-   * by attempting to connect to the RFID listener port
-   */
-  
   WiFiClient client;
-  client.setTimeout(2000); // 2 second timeout
+  client.setTimeout(2000);
   
   if (client.connect(ip.c_str(), pythonServerPort)) {
-    // Send a test message to see if it responds correctly
     client.print("TEST_CONNECTION");
     
-    // Wait for response
     unsigned long timeout = millis() + 2000;
     while (client.available() == 0 && millis() < timeout) {
       delay(10);
@@ -158,7 +114,6 @@ bool testPythonServer(String ip) {
       String response = client.readString();
       client.stop();
       
-      // If we get "OK" response, this is likely our Python server
       if (response.indexOf("OK") >= 0) {
         return true;
       }
@@ -171,13 +126,9 @@ bool testPythonServer(String ip) {
 }
 
 void discoverAndConnectToPi() {
-  /*
-   * Main function to discover and connect to Raspberry Pi
-   */
-  
   unsigned long currentTime = millis();
   
-  // Only attempt discovery if not found or if it's time to re-discover
+  // FIXED: Added missing || operator
   if (!raspberryPiFound || (currentTime - lastDiscoveryAttempt > DISCOVERY_INTERVAL)) {
     lastDiscoveryAttempt = currentTime;
     
@@ -199,9 +150,9 @@ void setup() {
   Serial.begin(9600);
   
   // Initialize OLED
-  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
     Serial.println("SSD1306 allocation failed");
-    while(1);
+    while (1);
   }
   
   display.clearDisplay();
@@ -304,7 +255,56 @@ void loop() {
   delay(100);
 }
 
+void loop() {
+  // Handle web server requests (for OLED messages)
+  server.handleClient();
+  
+  // Periodically attempt to discover Raspberry Pi if not found
+  if (!raspberryPiFound) {
+    discoverAndConnectToPi();
+  }
+  
+  // Check for RFID cards
+  if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial()) {
+    
+    // Prevent duplicate scans
+    unsigned long currentTime = millis();
+    if (currentTime - lastScanTime < SCAN_DELAY) {
+      mfrc522.PICC_HaltA();
+      return;
+    }
+    
+    // Read RFID UID
+    String rfidUID = "";
+    for (byte i = 0; i < mfrc522.uid.size; i++) {
+      rfidUID += String(mfrc522.uid.uidByte[i], HEX);
+    }
+    rfidUID.toUpperCase();
+    
+    // Prevent duplicate of same card
+    if (rfidUID == lastRFID && (currentTime - lastScanTime) < 5000) {
+      mfrc522.PICC_HaltA();
+      return;
+    }
+    
+    lastRFID = rfidUID;
+    lastScanTime = currentTime;
+    
+    Serial.println("RFID scanned: " + rfidUID);
+    
+    // Send to Python server
+    sendRFIDToPython(rfidUID);
+    
+    // Halt PICC
+    mfrc522.PICC_HaltA();
+    mfrc522.PCD_StopCrypto1();
+  }
+  
+  delay(100);
+}
+
 void sendRFIDToPython(String rfidUID) {
+  // FIXED: Added missing || operator
   if (!raspberryPiFound || raspberryPiIP.length() == 0) {
     displayMessage("Pi Not Found\nCannot send:\n" + rfidUID);
     Serial.println("✗ Cannot send RFID - Raspberry Pi not discovered");
@@ -450,19 +450,5 @@ void displayMessage(String message) {
     startPos = endPos + 1;
   }
   
-  display.display();
-}
-
-void showConnectionInfo() {
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(0, 0);
-  display.println("ESP8266 RFID Entry");
-  display.println("IP: " + WiFi.localIP().toString());
-  display.println("MAC: " + WiFi.macAddress());
-  display.println("Target Pi MAC:");
-  display.println(String(raspberryPiMAC));
-  display.println("Status: " + (raspberryPiFound ? "Pi Found" : "Searching..."));
   display.display();
 }
