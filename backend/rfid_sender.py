@@ -34,7 +34,8 @@ def validate_user(unique_id):
 
 def send_scan(unique_id):
     """Send scan data to Flask server after validation"""
-    # First validate the user    access_granted, name, message = validate_user(unique_id)
+    # First validate the user
+    access_granted, name, message = validate_user(unique_id)
     
     if not access_granted:
         print(f"Access Denied for RFID {unique_id}: {message}")
@@ -65,6 +66,7 @@ def send_scan(unique_id):
             return False
     except requests.exceptions.RequestException as e:
         print(f"Error sending scan to Flask server: {e}")
+        display_entry_result(False, name, "Server Error")
         return False
 
 def send_to_esp8266_oled(message):
