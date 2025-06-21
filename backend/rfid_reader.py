@@ -4,12 +4,13 @@ import requests
 import time
 
 # Update the serial port to match Raspberry Pi environment
-SERIAL_PORT = '/dev/ttyUSB0'  # Use /dev/ttyAMA0 if needed
+SERIAL_PORT = '/dev/ttyUSB0'  # RFID reader port
 BAUD_RATE = 9600
 FLASK_URL = 'http://127.0.0.1:5000'
 
 # Serial OLED Configuration for Exit Point
-OLED_SERIAL_PORT = '/dev/ttyUSB2'  # Serial port for OLED display
+OLED_SERIAL_PORT = '/dev/ttyS0'  # GPIO UART pins (GPIO 14 TX, GPIO 15 RX)
+OLED_BAUD_RATE = 9600  # May need adjustment based on your OLED
 
 def list_available_ports():
     """List all available serial ports"""
@@ -69,17 +70,51 @@ def send_scan(unique_id):
         return False
 
 def send_to_serial_oled(message):
-    """Send message to Serial OLED display for exit point"""
+    """Send message to Serial OLED display for exit point (GPIO UART)"""
     try:
-        with serial.Serial(OLED_SERIAL_PORT, BAUD_RATE, timeout=1) as oled_ser:
-            # Clear display and send message
-            oled_ser.write(b'\x0C')  # Clear screen command (may vary by OLED model)
-            time.sleep(0.1)
-            oled_ser.write(message.encode('utf-8'))
-            print(f"Sent to Serial OLED: {message}")
+        print(f"Attempting to send to GPIO UART OLED on {OLED_SERIAL_PORT}: {message}")
+        
+        # GPIO UART (/dev/ttyS0) specific settings
+        with serial.Serial(
+            port=OLED_SERIAL_PORT, 
+            baudrate=OLED_BAUD_RATE, 
+            timeout=2,
+            bytesize=serial.EIGHTBITS,
+            parity=serial.PARITY_NONE,
+            stopbits=serial.STOPBITS_ONE,
+            xonxoff=False,
+            rtscts=False,
+            dsrdtr=False
+        ) as oled_ser:
+            # Wait for connection to stabilize (important for GPIO UART)
+            time.sleep(0.3)
+            
+            # Try different clear screen commands based on common OLED types
+            clear_commands = [
+                b'\x0C',      # Form feed (most common)
+                b'\x1B[2J',   # ANSI clear screen
+                b'\x1B[H\x1B[J',  # ANSI home + clear
+                b'\r\n\r\n\r\n\r\n',  # Multiple newlines to push old text up
+            ]
+            
+            # Send clear command (try the first one)
+            oled_ser.write(clear_commands[0])
+            time.sleep(0.2)
+            
+            # Send the actual message
+            message_bytes = message.encode('utf-8')
+            oled_ser.write(message_bytes)
+            oled_ser.flush()  # Ensure data is sent immediately
+            
+            print(f"✓ Sent to GPIO UART OLED: {message}")
             return True
+            
+    except serial.SerialException as e:
+        print(f"✗ GPIO UART OLED connection error: {e}")
+        print(f"  Make sure UART is enabled and not used by console")
+        return False
     except Exception as e:
-        print(f"Error sending to Serial OLED: {e}")
+        print(f"✗ Error sending to GPIO UART OLED: {e}")
         return False
 
 def display_exit_result(access_granted, user_name="Unknown", error_reason=""):
@@ -121,11 +156,17 @@ def main():
         print(f"Connected to RFID scanner on {SERIAL_PORT}")
     except serial.SerialException as e:
         print(f"Connection failed: {e}")
-        return
-
-    # Initialize Serial OLED display
+        return    # Initialize Serial OLED display
     print("Initializing Serial OLED display...")
-    send_to_serial_oled("EXIT SCANNER\nReady for scan...")
+    print(f"OLED Port: {OLED_SERIAL_PORT}")
+    print(f"OLED Baud Rate: {OLED_BAUD_RATE}")
+    
+    # Test OLED connection
+    test_result = send_to_serial_oled("EXIT SCANNER\nReady for scan...")
+    if test_result:
+        print("✓ Serial OLED initialized successfully")
+    else:
+        print("✗ Serial OLED initialization failed - continuing without OLED")
     
     print("Listening for RFID scans... (action='exit')")
     try:

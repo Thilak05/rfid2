@@ -1,31 +1,11 @@
 /*
- * ESP8266 Complete RFID Entry System with OLED Display
+ * ESP8266 RFID Entry System with OLED Display
  * 
- * This ESP8266 handles:
- * 1. RFID scanning (MFRC522)
- * 2. OLED display (SSD1306)
- * 3. WiFi communication with Raspberry Pi
- * 4. Automatic Pi discovery by MAC address
- * 
- * Hardware Required:
- * - ESP8266 (NodeMCU, Wemos D1 Mini, etc.)
- * - MFRC522 RFID Scanner
- * - SSD1306 OLED Display (128x64, I2C)
- * 
- * RFID Wiring (SPI):
- * MFRC522 VCC  -> 3.3V
- * MFRC522 RST  -> D3 (GPIO 0)
- * MFRC522 GND  -> GND
- * MFRC522 MISO -> D6 (GPIO 12)
- * MFRC522 MOSI -> D7 (GPIO 13)
- * MFRC522 SCK  -> D5 (GPIO 14)
- * MFRC522 SDA  -> D4 (GPIO 2)
- * 
- * OLED Wiring (I2C):
- * OLED VCC -> 3.3V
- * OLED GND -> GND
- * OLED SCL -> D1 (GPIO 5)
- * OLED SDA -> D2 (GPIO 4)
+ * This ESP8266 code:
+ * 1. Reads RFID data from MFRC522 scanner
+ * 2. Sends RFID data to Python server over WiFi
+ * 3. Displays access results on SSD1306 OLED
+ * 4. Uses MAC address for identification: C4:5B:BE:74:FC:39
  */
 
 #include <ESP8266WiFi.h>
@@ -70,130 +50,7 @@ const unsigned long DISCOVERY_INTERVAL = 30000; // Re-discover every 30 seconds
 // Function declarations
 String discoverRaspberryPiIP();
 bool pingIP(String ip);
-bool testPythonServer(String ip);
 void discoverAndConnectToPi();
-void sendRFIDToPython(String rfidUID);
-void handleOLEDMessage();
-void displayMessage(String message);
-void showConnectionInfo();
-
-String discoverRaspberryPiIP() {
-  /*
-   * Discover Raspberry Pi IP address by scanning network for MAC address
-   * This function attempts to find the Pi by pinging common IP ranges
-   * and checking for Python server response
-   */
-  
-  Serial.println("🔍 Discovering Raspberry Pi by MAC address...");
-  displayMessage("Discovering Pi...\n" + String(raspberryPiMAC));
-  
-  // Get our own IP to determine network range
-  IPAddress localIP = WiFi.localIP();
-  String networkBase = String(localIP[0]) + "." + String(localIP[1]) + "." + String(localIP[2]) + ".";
-  
-  Serial.println("Scanning network: " + networkBase + "1-254");
-  
-  // Scan common IP ranges (simplified approach for ESP8266)
-  for (int i = 1; i <= 254; i++) {
-    String testIP = networkBase + String(i);
-    
-    // Skip our own IP
-    if (testIP == WiFi.localIP().toString()) continue;
-    
-    // Test connectivity and Python server
-    if (pingIP(testIP) && testPythonServer(testIP)) {
-      Serial.println("✓ Found Raspberry Pi at: " + testIP);
-      return testIP;
-    }
-    
-    // Show progress every 50 IPs
-    if (i % 50 == 0) {
-      Serial.println("Scanned up to: " + testIP);
-      displayMessage("Scanning...\n" + testIP + "\nLooking for Pi...");
-      yield(); // Prevent watchdog timeout
-    }
-  }
-  
-  Serial.println("✗ Raspberry Pi not found on network");
-  return "";
-}
-
-bool pingIP(String ip) {
-  /*
-   * Simple connectivity test to an IP address
-   * Uses HTTP request as a "ping" since ESP8266 doesn't have native ping
-   */
-  
-  WiFiClient client;
-  client.setTimeout(1000); // 1 second timeout
-  
-  if (client.connect(ip.c_str(), pythonServerPort)) {
-    client.stop();
-    return true;
-  }
-  
-  return false;
-}
-
-bool testPythonServer(String ip) {
-  /*
-   * Test if the IP address is running our Python server
-   * by attempting to connect to the RFID listener port
-   */
-  
-  WiFiClient client;
-  client.setTimeout(2000); // 2 second timeout
-  
-  if (client.connect(ip.c_str(), pythonServerPort)) {
-    // Send a test message to see if it responds correctly
-    client.print("TEST_CONNECTION");
-    
-    // Wait for response
-    unsigned long timeout = millis() + 2000;
-    while (client.available() == 0 && millis() < timeout) {
-      delay(10);
-    }
-    
-    if (client.available()) {
-      String response = client.readString();
-      client.stop();
-      
-      // If we get "OK" response, this is likely our Python server
-      if (response.indexOf("OK") >= 0) {
-        return true;
-      }
-    }
-    
-    client.stop();
-  }
-  
-  return false;
-}
-
-void discoverAndConnectToPi() {
-  /*
-   * Main function to discover and connect to Raspberry Pi
-   */
-  
-  unsigned long currentTime = millis();
-  
-  // Only attempt discovery if not found or if it's time to re-discover
-  if (!raspberryPiFound || (currentTime - lastDiscoveryAttempt > DISCOVERY_INTERVAL)) {
-    lastDiscoveryAttempt = currentTime;
-    
-    raspberryPiIP = discoverRaspberryPiIP();
-    
-    if (raspberryPiIP.length() > 0) {
-      raspberryPiFound = true;
-      displayMessage("Pi Found!\nIP: " + raspberryPiIP + "\nReady for scan...");
-      Serial.println("✓ Connected to Raspberry Pi at: " + raspberryPiIP);
-    } else {
-      raspberryPiFound = false;
-      displayMessage("Pi Not Found\nMAC: " + String(raspberryPiMAC) + "\nRetrying...");
-      Serial.println("✗ Raspberry Pi discovery failed");
-    }
-  }
-}
 
 void setup() {
   Serial.begin(9600);
@@ -228,8 +85,7 @@ void setup() {
     Serial.print(".");
   }
   
-  Serial.println();
-  Serial.println("WiFi connected!");
+  Serial.println();  Serial.println("WiFi connected!");
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
   Serial.print("MAC address: ");
@@ -237,7 +93,6 @@ void setup() {
   
   // Setup web server for OLED messages
   server.on("/message", HTTP_POST, handleOLEDMessage);
-  server.on("/", HTTP_GET, handleRoot);
   server.begin();
   
   // Discover Raspberry Pi by MAC address
@@ -379,45 +234,8 @@ void handleOLEDMessage() {
   }
 }
 
-void handleRoot() {
-  String html = "<html><body>";
-  html += "<h1>ESP8266 RFID Entry System</h1>";
-  html += "<p><strong>IP:</strong> " + WiFi.localIP().toString() + "</p>";
-  html += "<p><strong>MAC:</strong> " + WiFi.macAddress() + "</p>";
-  html += "<p><strong>Target Pi MAC:</strong> " + String(raspberryPiMAC) + "</p>";
-  html += "<p><strong>Pi Status:</strong> " + (raspberryPiFound ? ("Connected - " + raspberryPiIP) : "Not Found") + "</p>";
-  html += "<p><strong>System:</strong> RFID + OLED Complete Entry System</p>";
-  html += "<hr>";
-  html += "<h2>Test OLED Display</h2>";
-  html += "<form method='post' action='/message'>";
-  html += "<textarea name='plain' rows='4' cols='40' placeholder='Access Granted\\nDoor Opened\\nWelcome User'></textarea><br><br>";
-  html += "<input type='submit' value='Send to OLED'>";
-  html += "</form>";
-  html += "<hr>";
-  html += "<h3>Example Messages:</h3>";
-  html += "<ul>";
-  html += "<li><strong>Success:</strong> Access Granted\\nDoor Opened\\nWelcome John</li>";
-  html += "<li><strong>Denied:</strong> Access Denied\\nDoor Closed\\nNot Registered</li>";
-  html += "<li><strong>Ready:</strong> ENTRY SCANNER\\nReady for scan...</li>";
-  html += "<li><strong>Already Inside:</strong> Already Inside\\nAccess Denied\\nDoor Closed</li>";
-  html += "</ul>";
-  html += "<hr>";
-  html += "<h3>System Information:</h3>";
-  html += "<ul>";
-  html += "<li>RFID Scanner: MFRC522 on SPI</li>";
-  html += "<li>OLED Display: SSD1306 on I2C</li>";
-  html += "<li>Communication: WiFi to Raspberry Pi</li>";
-  html += "<li>Discovery: By Pi MAC address</li>";
-  html += "<li>Listen Port: " + String(pythonServerPort) + "</li>";
-  html += "</ul>";
-  html += "</body></html>";
-  server.send(200, "text/html", html);
-}
-
 void displayMessage(String message) {
   display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
   display.setCursor(0, 0);
   
   // Replace \n with actual newlines
@@ -426,43 +244,155 @@ void displayMessage(String message) {
   // Split message by newlines and display
   int startPos = 0;
   int line = 0;
-  int maxLines = 8; // 64 pixels / 8 pixels per line
   
-  while (startPos < message.length() && line < maxLines) {
+  while (startPos < message.length() && line < 8) { // Max 8 lines
     int endPos = message.indexOf('\n', startPos);
     if (endPos == -1) endPos = message.length();
     
     String lineText = message.substring(startPos, endPos);
-    
-    // Make certain lines larger for better visibility
-    if (line == 0 && (lineText.indexOf("Access") != -1 || lineText.indexOf("ENTRY") != -1)) {
-      display.setTextSize(2);
-      display.setCursor(0, line * 16);
-      display.println(lineText);
-      line += 2; // Takes 2 line spaces
-      display.setTextSize(1);
-    } else {
-      display.setCursor(0, line * 8);
-      display.println(lineText);
-      line++;
-    }
+    display.setCursor(0, line * 8);
+    display.println(lineText);
     
     startPos = endPos + 1;
+    line++;
   }
   
   display.display();
 }
 
-void showConnectionInfo() {
+void displayConnectionInfo() {
   display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
   display.setCursor(0, 0);
+  display.setTextSize(1);
   display.println("ESP8266 RFID Entry");
   display.println("IP: " + WiFi.localIP().toString());
   display.println("MAC: " + WiFi.macAddress());
-  display.println("Target Pi MAC:");
-  display.println(String(raspberryPiMAC));
-  display.println("Status: " + (raspberryPiFound ? "Pi Found" : "Searching..."));
+  display.println("Ready for scan...");
   display.display();
+}
+
+String discoverRaspberryPiIP() {
+  /*
+   * Discover Raspberry Pi IP address by scanning network for MAC address
+   * This function attempts to find the Pi by pinging common IP ranges
+   * and checking ARP responses (limited on ESP8266, so we use ping method)
+   */
+  
+  Serial.println("🔍 Discovering Raspberry Pi by MAC address...");
+  displayMessage("Discovering Pi...\n" + String(raspberryPiMAC));
+  
+  // Get our own IP to determine network range
+  IPAddress localIP = WiFi.localIP();
+  String networkBase = String(localIP[0]) + "." + String(localIP[1]) + "." + String(localIP[2]) + ".";
+  
+  Serial.println("Scanning network: " + networkBase + "1-254");
+  
+  // Scan common IP ranges (this is a simplified approach)
+  // In a real implementation, you might need a more sophisticated method
+  for (int i = 1; i <= 254; i++) {
+    String testIP = networkBase + String(i);
+    
+    // Skip our own IP
+    if (testIP == WiFi.localIP().toString()) continue;
+    
+    // Test connectivity with a quick ping-like check
+    if (pingIP(testIP)) {
+      Serial.println("✓ Found responsive device at: " + testIP);
+      
+      // For ESP8266, we can't easily check ARP table
+      // So we'll try to connect and see if it responds as expected
+      if (testPythonServer(testIP)) {
+        Serial.println("✓ Found Raspberry Pi at: " + testIP);
+        return testIP;
+      }
+    }
+    
+    // Show progress
+    if (i % 50 == 0) {
+      Serial.println("Scanned up to: " + testIP);
+      yield(); // Prevent watchdog timeout
+    }
+  }
+  
+  Serial.println("✗ Raspberry Pi not found on network");
+  return "";
+}
+
+bool pingIP(String ip) {
+  /*
+   * Simple connectivity test to an IP address
+   * Uses HTTP request as a "ping" since ESP8266 doesn't have native ping
+   */
+  
+  WiFiClient client;
+  
+  // Try to connect with short timeout
+  client.setTimeout(1000); // 1 second timeout
+  
+  if (client.connect(ip.c_str(), pythonServerPort)) {
+    client.stop();
+    return true;
+  }
+  
+  return false;
+}
+
+bool testPythonServer(String ip) {
+  /*
+   * Test if the IP address is running our Python server
+   * by attempting to connect to the RFID listener port
+   */
+  
+  WiFiClient client;
+  client.setTimeout(2000); // 2 second timeout
+  
+  if (client.connect(ip.c_str(), pythonServerPort)) {
+    // Send a test message to see if it responds correctly
+    client.print("TEST_CONNECTION");
+    
+    // Wait for response
+    unsigned long timeout = millis() + 2000;
+    while (client.available() == 0 && millis() < timeout) {
+      delay(10);
+    }
+    
+    if (client.available()) {
+      String response = client.readString();
+      client.stop();
+      
+      // If we get "OK" response, this is likely our Python server
+      if (response.indexOf("OK") >= 0) {
+        return true;
+      }
+    }
+    
+    client.stop();
+  }
+  
+  return false;
+}
+
+void discoverAndConnectToPi() {
+  /*
+   * Main function to discover and connect to Raspberry Pi
+   */
+  
+  unsigned long currentTime = millis();
+  
+  // Only attempt discovery if not found or if it's time to re-discover
+  if (!raspberryPiFound || (currentTime - lastDiscoveryAttempt > DISCOVERY_INTERVAL)) {
+    lastDiscoveryAttempt = currentTime;
+    
+    raspberryPiIP = discoverRaspberryPiIP();
+    
+    if (raspberryPiIP.length() > 0) {
+      raspberryPiFound = true;
+      displayMessage("Pi Found!\nIP: " + raspberryPiIP + "\nReady for scan...");
+      Serial.println("✓ Connected to Raspberry Pi at: " + raspberryPiIP);
+    } else {
+      raspberryPiFound = false;
+      displayMessage("Pi Not Found\nMAC: " + String(raspberryPiMAC) + "\nRetrying...");
+      Serial.println("✗ Raspberry Pi discovery failed");
+    }
+  }
 }
