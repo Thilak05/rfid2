@@ -7,6 +7,10 @@ import time
 SERIAL_PORT = '/dev/ttyUSB1'  # Use /dev/ttyAMA0 if needed
 BAUD_RATE = 9600
 FLASK_URL = 'http://127.0.0.1:5000'
+ESP_IP = "192.168.0.10"  # ESP8266 OLED IP for entry point
+
+# ESP8266 OLED Configuration for Entry Point
+ESP_IP = "192.168.0.10"
 
 def list_available_ports():
     """List all available serial ports"""
@@ -30,11 +34,11 @@ def validate_user(unique_id):
 
 def send_scan(unique_id):
     """Send scan data to Flask server after validation"""
-    # First validate the user
-    access_granted, name, message = validate_user(unique_id)
+    # First validate the user    access_granted, name, message = validate_user(unique_id)
     
     if not access_granted:
         print(f"Access Denied for RFID {unique_id}: {message}")
+        display_entry_result(False, "Unknown", "Not Registered")
         return False
     
     print(f"Access Granted for {name} (RFID: {unique_id})")
@@ -46,14 +50,52 @@ def send_scan(unique_id):
         if response.status_code == 200:
             result = response.json()
             print(f"Entry logged successfully: {result.get('message', '')}")
+            display_entry_result(True, name)
             return True
         else:
             result = response.json()
-            print(f"Entry failed: {result.get('message', '')}")
+            error_msg = result.get('message', 'Entry failed')
+            print(f"Entry failed: {error_msg}")
+            
+            # Handle specific error cases
+            if "already inside" in error_msg.lower():
+                display_entry_result(False, name, "Already Inside")
+            else:
+                display_entry_result(False, name, "Entry Failed")
             return False
     except requests.exceptions.RequestException as e:
         print(f"Error sending scan to Flask server: {e}")
         return False
+
+def send_to_esp8266_oled(message):
+    """Send message to ESP8266 OLED display for entry point"""
+    try:
+        response = requests.post(f"http://{ESP_IP}/message", data=message, timeout=5)
+        print(f"Sent to ESP8266 OLED: {response.status_code} - {response.text}")
+        return True
+    except Exception as e:
+        print(f"Error sending to ESP8266 OLED: {e}")
+        return False
+
+def display_entry_result(access_granted, user_name="Unknown", error_reason=""):
+    """Display entry result on ESP8266 OLED"""
+    if access_granted:
+        # Access Granted - Entry successful
+        message = f"Access Granted\nDoor Opened\nWelcome {user_name}"
+        print(f"✅ ENTRY: Access granted for {user_name}")
+    else:
+        # Access Denied - Entry failed
+        message = f"Access Denied\nDoor Closed\n{error_reason}"
+        print(f"❌ ENTRY: Access denied - {error_reason}")
+    
+    # Send to ESP8266 OLED
+    send_to_esp8266_oled(message)
+    
+    # Keep message displayed for 3 seconds
+    time.sleep(3)
+    
+    # Return to ready state
+    send_to_esp8266_oled("ENTRY SCANNER\nReady for scan...")
 
 def main():
     # List available ports
@@ -68,10 +110,16 @@ def main():
 
     try:
         ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-        print(f"Connected to {SERIAL_PORT}")
+        print(f"Connected to RFID scanner on {SERIAL_PORT}")
     except serial.SerialException as e:
         print(f"Connection failed: {e}")
-        return    print("Listening for RFID scans... (action='entry')")
+        return
+
+    # Initialize ESP8266 OLED display
+    print("Initializing ESP8266 OLED display...")
+    send_to_esp8266_oled("ENTRY SCANNER\nReady for scan...")
+    
+    print("Listening for RFID scans... (action='entry')")
     try:
         while True:
             if ser.in_waiting:
