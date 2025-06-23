@@ -1,11 +1,12 @@
 /*
- * ESP32 WROOM Simple RFID Entry Scanner with OLED Display
+ * ESP32 WROOM RFID Exit Scanner with OLED Display
  * 
- * This ESP32 simply:
- * 1. Scans RFID cards and sends UID to Python server
+ * This ESP32 handles EXIT operations:
+ * 1. Scans RFID cards and sends UID to Python server for EXIT
  * 2. Displays messages received from Python server on OLED
  * 3. Python server handles all logic (user verification, database, etc.)
- *  * Pin Connections:
+ * 
+ * Pin Connections:
  * RFID Reader (Serial):
  *   GND -> GND
  *   VCC -> 3.3V
@@ -244,7 +245,7 @@ void setup() {
   delay(1000); // Give serial time to initialize
   
   Serial.println();
-  Serial.println("=== ESP32 RFID Entry System ===");
+  Serial.println("=== ESP32 RFID EXIT System ===");
   Serial.println("Initializing...");
   
   // Initialize RFID Serial2 (GPIO16=RX, GPIO17=TX)
@@ -259,7 +260,7 @@ void setup() {
     while (1);
   }
   
-  displayMessage("ESP32 RFID\nInitializing...");
+  displayMessage("ESP32 EXIT\nInitializing...");
   
   // Print WiFi credentials for debugging
   Serial.println("WiFi Configuration:");
@@ -273,7 +274,7 @@ void setup() {
   
   int wifiAttempts = 0;
   const int maxWifiAttempts = 30; // 30 seconds timeout
-    while (WiFi.status() != WL_CONNECTED && wifiAttempts < maxWifiAttempts) {
+  while (WiFi.status() != WL_CONNECTED && wifiAttempts < maxWifiAttempts) {
     delay(1000);
     wifiAttempts++;
     Serial.print(".");
@@ -289,7 +290,8 @@ void setup() {
       displayMessage("Connecting WiFi...\nAttempt: " + String(wifiAttempts) + "/" + String(maxWifiAttempts) + "\nStatus: " + statusText);
     }
   }
-    if (WiFi.status() != WL_CONNECTED) {
+  
+  if (WiFi.status() != WL_CONNECTED) {
     Serial.println();
     Serial.println("WiFi connection failed!");
     Serial.println("Final WiFi Status: " + String(WiFi.status()) + " (" + getWiFiStatusText(WiFi.status()) + ")");
@@ -305,7 +307,8 @@ void setup() {
     displayMessage("WiFi FAILED!\nSSID: " + String(ssid) + "\nStatus: " + getWiFiStatusText(WiFi.status()));
     while(1) delay(1000); // Stop here if WiFi fails
   }
-    Serial.println();
+  
+  Serial.println();
   Serial.println("WiFi connected successfully!");
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
@@ -315,7 +318,8 @@ void setup() {
   Serial.println(WiFi.RSSI());
   Serial.print("Connected to SSID: ");
   Serial.println(WiFi.SSID());
-    // Setup web server for OLED messages
+  
+  // Setup web server for OLED messages
   server.on("/message", HTTP_POST, handleOLEDMessage);
   server.on("/", HTTP_GET, handleRoot);
   server.begin();
@@ -323,12 +327,13 @@ void setup() {
   // Discover Raspberry Pi by MAC address
   pythonServerIP = discoverPiByMAC();
   if (pythonServerIP.length() > 0) {
-    piFound = true;    displayMessage("ENTRY SCANNER\nPi Found: " + pythonServerIP + "\nMAC: " + WiFi.macAddress());
+    piFound = true;
+    displayMessage("EXIT SCANNER\nPi Found: " + pythonServerIP + "\nMAC: " + WiFi.macAddress());
   } else {
-    displayMessage("ENTRY SCANNER\nPi Not Found\nMAC: " + WiFi.macAddress());
+    displayMessage("EXIT SCANNER\nPi Not Found\nMAC: " + WiFi.macAddress());
   }
   
-  Serial.println("ESP32 RFID Entry System ready!");
+  Serial.println("ESP32 RFID EXIT System ready!");
   Serial.println("MAC Address: " + WiFi.macAddress());
 }
 
@@ -344,10 +349,11 @@ void loop() {
       pythonServerIP = discoverPiByMAC();
       if (pythonServerIP.length() > 0) {
         piFound = true;
-        displayMessage("ENTRY SCANNER\nPi Found: " + pythonServerIP + "\nMAC: " + WiFi.macAddress());
+        displayMessage("EXIT SCANNER\nPi Found: " + pythonServerIP + "\nMAC: " + WiFi.macAddress());
       }
     }
   }
+  
   // Check for RFID cards from serial
   if (rfidSerial.available()) {
     String rfidUID = rfidSerial.readStringUntil('\n');
@@ -368,9 +374,9 @@ void loop() {
       lastRFID = rfidUID;
       lastScanTime = currentTime;
       
-      Serial.println("RFID scanned: " + rfidUID);
+      Serial.println("RFID scanned for EXIT: " + rfidUID);
       
-      // Send to Python server and let it handle everything
+      // Send to Python server for EXIT processing
       sendRFIDToPython(rfidUID);
     }
   }
@@ -385,18 +391,18 @@ void sendRFIDToPython(String rfidUID) {
     return;
   }
   
-  displayMessage("Sending...\n" + rfidUID);
+  displayMessage("Sending EXIT...\n" + rfidUID);
   
   WiFiClient client;
   HTTPClient http;
   
-  // Send RFID to Python Flask server
+  // Send RFID to Python Flask server for EXIT
   http.begin(client, "http://" + pythonServerIP + ":" + String(pythonServerPort) + "/scan");
   http.addHeader("Content-Type", "application/json");
   
-  // Create JSON payload with MAC address for device identification
+  // Create JSON payload with MAC address for device identification (EXIT action)
   String deviceMAC = WiFi.macAddress();
-  String jsonPayload = "{\"unique_id\":\"" + rfidUID + "\",\"action\":\"entry\",\"device_mac\":\"" + deviceMAC + "\"}";
+  String jsonPayload = "{\"unique_id\":\"" + rfidUID + "\",\"action\":\"exit\",\"device_mac\":\"" + deviceMAC + "\"}";
   
   int httpResponseCode = http.POST(jsonPayload);
   
@@ -406,7 +412,7 @@ void sendRFIDToPython(String rfidUID) {
     Serial.println("Response: " + response);
     
     if (httpResponseCode == 200) {
-      displayMessage("Sent Successfully\n" + rfidUID);
+      displayMessage("EXIT Successful\n" + rfidUID);
     } else {
       displayMessage("Server Error\n" + String(httpResponseCode));
     }
@@ -422,13 +428,11 @@ void sendRFIDToPython(String rfidUID) {
   // Return to ready state after 2 seconds
   delay(2000);
   if (piFound) {
-    displayMessage("ENTRY SCANNER\nPi: " + pythonServerIP + "\nMAC: " + WiFi.macAddress());
+    displayMessage("EXIT SCANNER\nPi: " + pythonServerIP + "\nMAC: " + WiFi.macAddress());
   } else {
-    displayMessage("ENTRY SCANNER\nPi Not Found\nMAC: " + WiFi.macAddress());
+    displayMessage("EXIT SCANNER\nPi Not Found\nMAC: " + WiFi.macAddress());
   }
 }
-
-
 
 void handleOLEDMessage() {
   if (server.hasArg("plain")) {
@@ -445,25 +449,26 @@ void handleOLEDMessage() {
 
 void handleRoot() {
   String html = "<html><body>";
-  html += "<h1>ESP32 WROOM RFID Entry Scanner</h1>";  html += "<p><strong>MAC:</strong> " + WiFi.macAddress() + "</p>";
+  html += "<h1>ESP32 WROOM RFID EXIT Scanner</h1>";
+  html += "<p><strong>MAC:</strong> " + WiFi.macAddress() + "</p>";
   html += "<p><strong>IP:</strong> " + WiFi.localIP().toString() + "</p>";
   html += "<p><strong>Target Pi MAC:</strong> " + String(raspberryPiMAC) + "</p>";
   html += "<p><strong>Pi Status:</strong> " + (piFound ? ("Found - " + pythonServerIP) : "Not Found") + "</p>";
-  html += "<p><strong>Function:</strong> ESP32 RFID scanner + OLED display</p>";
+  html += "<p><strong>Function:</strong> ESP32 RFID EXIT scanner + OLED display</p>";
   html += "<hr>";
   html += "<h2>Test OLED Display</h2>";
   html += "<form method='post' action='/message'>";
-  html += "<textarea name='plain' rows='4' cols='40' placeholder='Access Granted\\nDoor Opened\\nWelcome User'></textarea><br><br>";
+  html += "<textarea name='plain' rows='4' cols='40' placeholder='Exit Granted\\nDoor Opened\\nGoodbye User'></textarea><br><br>";
   html += "<input type='submit' value='Send to OLED'>";
   html += "</form>";
   html += "<hr>";
   html += "<h3>Example Messages:</h3>";
   html += "<ul>";
-  html += "<li><strong>Success:</strong> Access Granted\\nDoor Opened\\nWelcome John</li>";
-  html += "<li><strong>Denied:</strong> Access Denied\\nDoor Closed\\nNot Registered</li>";
-  html += "<li><strong>Ready:</strong> ENTRY SCANNER\\nReady for scan...</li>";
+  html += "<li><strong>Success:</strong> Exit Granted\\nDoor Opened\\nGoodbye John</li>";
+  html += "<li><strong>Denied:</strong> Access Denied\\nNo Entry Found\\nUser</li>";
+  html += "<li><strong>Ready:</strong> EXIT SCANNER\\nReady for scan...</li>";
   html += "</ul>";
-  html += "<p><strong>ESP32 MAC:</strong> " + WiFi.macAddress() + "</p>";
+  html += "<p><strong>ESP32 EXIT MAC:</strong> " + WiFi.macAddress() + "</p>";
   html += "</body></html>";
   server.send(200, "text/html", html);
 }

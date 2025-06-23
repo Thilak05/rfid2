@@ -1,21 +1,55 @@
-import serial
-import serial.tools.list_ports
 import requests
 import time
+import socket
+import threading
+import json
+from datetime import datetime
 
-# Update the serial port to match Raspberry Pi environment
-SERIAL_PORT = '/dev/ttyUSB0'  # RFID reader port
-BAUD_RATE = 9600
+# Configuration
 FLASK_URL = 'http://127.0.0.1:5000'
+ESP32_EXIT_MAC = "E0:5A:1B:A2:A5:B4"  # ESP32 EXIT scanner MAC address (for identification)
+RASPBERRY_PI_MAC = "D8:3A:DD:78:01:07"  # Raspberry Pi MAC address
+ESP32_LISTEN_PORT = 8081  # Port to listen for ESP32 EXIT data (different from entry port)
+ESP32_OLED_PORT = 80      # Port for sending OLED messages to ESP32 EXIT
 
-# Serial OLED Configuration for Exit Point
-OLED_SERIAL_PORT = '/dev/ttyS0'  # GPIO UART pins (GPIO 14 TX, GPIO 15 RX)
-OLED_BAUD_RATE = 9600  # May need adjustment based on your OLED
+# Global variables
+esp32_exit_ip = None  # Will be discovered when ESP32 EXIT connects
+running = True
 
-def list_available_ports():
-    """List all available serial ports"""
-    ports = serial.tools.list_ports.comports()
-    return [port.device for port in ports]
+def discover_esp32_exit_ip():
+    """Discover ESP32 EXIT IP address by MAC address"""
+    try:
+        # Use ARP table to find IP by MAC address
+        import subprocess
+        import re
+        
+        # Get ARP table
+        result = subprocess.run(['arp', '-a'], capture_output=True, text=True)
+        lines = result.stdout.split('\n')
+        
+        for line in lines:
+            if ESP32_EXIT_MAC.lower() in line.lower():
+                # Extract IP address from ARP entry
+                ip_match = re.search(r'(\d+\.\d+\.\d+\.\d+)', line)
+                if ip_match:
+                    return ip_match.group(1)
+        
+        print(f"ESP32 EXIT with MAC {ESP32_EXIT_MAC} not found in ARP table")
+        return None
+        
+    except Exception as e:
+        print(f"Error discovering ESP32 EXIT IP: {e}")
+        return None
+
+def ping_esp32_exit(ip):
+    """Ping ESP32 EXIT to verify it's reachable"""
+    try:
+        import subprocess
+        result = subprocess.run(['ping', '-c', '1', ip], 
+                              capture_output=True, text=True, timeout=5)
+        return result.returncode == 0
+    except Exception:
+        return False
 
 def validate_user(unique_id):
     """Validate user with the database"""
@@ -33,7 +67,7 @@ def validate_user(unique_id):
         return False, 'Unknown', 'Server connection error'
 
 def send_scan(unique_id):
-    """Send scan data to Flask server after validation"""
+    """Send exit scan data to Flask server after validation"""
     # First validate the user
     access_granted, name, message = validate_user(unique_id)
     
@@ -44,8 +78,12 @@ def send_scan(unique_id):
     
     print(f"Access Granted for {name} (RFID: {unique_id})")
     
-    # Send the exit scan
-    data = {'unique_id': unique_id, 'action': 'exit'}
+    # Send the exit scan with ESP32 MAC address
+    data = {
+        'unique_id': unique_id, 
+        'action': 'exit',
+        'device_mac': ESP32_EXIT_MAC
+    }
     try:
         response = requests.post(f'{FLASK_URL}/scan', json=data)
         if response.status_code == 200:
@@ -60,7 +98,7 @@ def send_scan(unique_id):
             
             # Handle specific error cases for exit
             if "no entry found" in error_msg.lower():
-                display_exit_result(False, name, "Entry Not Found")
+                display_exit_result(False, name, "No Entry Found")
             else:
                 display_exit_result(False, name, "Exit Failed")
             return False
@@ -69,124 +107,191 @@ def send_scan(unique_id):
         display_exit_result(False, name, "Server Error")
         return False
 
-def send_to_serial_oled(message):
-    """Send message to Serial OLED display for exit point (GPIO UART)"""
-    try:
-        print(f"Attempting to send to GPIO UART OLED on {OLED_SERIAL_PORT}: {message}")
-        
-        # GPIO UART (/dev/ttyS0) specific settings
-        with serial.Serial(
-            port=OLED_SERIAL_PORT, 
-            baudrate=OLED_BAUD_RATE, 
-            timeout=2,
-            bytesize=serial.EIGHTBITS,
-            parity=serial.PARITY_NONE,
-            stopbits=serial.STOPBITS_ONE,
-            xonxoff=False,
-            rtscts=False,
-            dsrdtr=False
-        ) as oled_ser:
-            # Wait for connection to stabilize (important for GPIO UART)
-            time.sleep(0.3)
-            
-            # Try different clear screen commands based on common OLED types
-            clear_commands = [
-                b'\x0C',      # Form feed (most common)
-                b'\x1B[2J',   # ANSI clear screen
-                b'\x1B[H\x1B[J',  # ANSI home + clear
-                b'\r\n\r\n\r\n\r\n',  # Multiple newlines to push old text up
-            ]
-            
-            # Send clear command (try the first one)
-            oled_ser.write(clear_commands[0])
-            time.sleep(0.2)
-            
-            # Send the actual message
-            message_bytes = message.encode('utf-8')
-            oled_ser.write(message_bytes)
-            oled_ser.flush()  # Ensure data is sent immediately
-            
-            print(f"✓ Sent to GPIO UART OLED: {message}")
-            return True
-            
-    except serial.SerialException as e:
-        print(f"✗ GPIO UART OLED connection error: {e}")
-        print(f"  Make sure UART is enabled and not used by console")
+def send_to_esp32_exit_oled(message):
+    """Send message to ESP32 EXIT OLED display"""
+    global esp32_exit_ip
+    
+    if not esp32_exit_ip:
+        print("ESP32 EXIT IP not available - cannot send OLED message")
         return False
+        
+    try:
+        response = requests.post(f"http://{esp32_exit_ip}:{ESP32_OLED_PORT}/message", 
+                               data=message, timeout=5)
+        print(f"✓ Sent to ESP32 EXIT OLED: {response.status_code} - {response.text}")
+        return True
     except Exception as e:
-        print(f"✗ Error sending to GPIO UART OLED: {e}")
+        print(f"✗ Error sending to ESP32 EXIT OLED: {e}")
         return False
 
 def display_exit_result(access_granted, user_name="Unknown", error_reason=""):
-    """Display exit result on Serial OLED"""
+    """Display exit result on ESP32 EXIT OLED"""
     if access_granted:
         # Access Granted - Exit successful
-        message = f"Access Granted\nDoor Opened\nGoodbye {user_name}"
+        message = f"Exit Granted\nDoor Opened\nGoodbye {user_name}"
         print(f"✅ EXIT: Access granted for {user_name}")
     else:
         # Access Denied - Exit failed
-        if "entry not found" in error_reason.lower():
-            message = f"Entry Not Found\nAccess Denied\nDoor Closed"
+        if "no entry found" in error_reason.lower():
+            message = f"No Entry Found\nAccess Denied\n{user_name}"
         else:
             message = f"Access Denied\nDoor Closed\n{error_reason}"
         print(f"❌ EXIT: Access denied - {error_reason}")
     
-    # Send to Serial OLED
-    send_to_serial_oled(message)
+    # Send to ESP32 EXIT OLED
+    send_to_esp32_exit_oled(message)
     
     # Keep message displayed for 3 seconds
     time.sleep(3)
     
     # Return to ready state
-    send_to_serial_oled("EXIT SCANNER\nReady for scan...")
+    send_to_esp32_exit_oled("EXIT SCANNER\nReady for scan...")
+
+def handle_rfid_data(rfid_data, client_ip):
+    """Process RFID data received from ESP32 EXIT"""
+    
+    # Handle test connection
+    if rfid_data == "TEST_CONNECTION":
+        print(f"🔗 Test connection from ESP32 EXIT at {client_ip}")
+        return True
+    
+    print(f"📡 Received RFID data from ESP32 EXIT ({client_ip}): {rfid_data}")
+    
+    # Verify this is our ESP32 EXIT by checking if IP matches discovered IP
+    global esp32_exit_ip
+    if esp32_exit_ip and client_ip != esp32_exit_ip:
+        print(f"⚠️  Warning: Data from unexpected IP {client_ip}, expected {esp32_exit_ip}")
+    
+    # Process the RFID scan for EXIT
+    success = send_scan(rfid_data)
+    if success:
+        print("✓ Exit processed successfully")
+    else:
+        print("✗ Exit processing failed")
+    
+    return success
+
+def rfid_exit_server():
+    """Server to receive RFID data from ESP32 EXIT"""
+    global running, esp32_exit_ip
+    
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    
+    try:
+        server_socket.bind(('', ESP32_LISTEN_PORT))
+        server_socket.listen(1)
+        server_socket.settimeout(1.0)  # Non-blocking with timeout
+        
+        print(f"🌐 RFID EXIT Server listening on port {ESP32_LISTEN_PORT}")
+        print(f"   Waiting for ESP32 EXIT ({ESP32_EXIT_MAC}) to send RFID data...")
+        
+        while running:
+            try:
+                client_socket, client_address = server_socket.accept()
+                client_ip = client_address[0]
+                
+                # Update ESP32 EXIT IP if not set
+                if not esp32_exit_ip:
+                    esp32_exit_ip = client_ip
+                    print(f"📍 ESP32 EXIT connected from: {esp32_exit_ip}")
+                
+                # Receive data
+                data = client_socket.recv(1024).decode('utf-8').strip()
+                if data:
+                    # Handle the RFID data
+                    handle_rfid_data(data, client_ip)
+                    
+                    # Send acknowledgment
+                    client_socket.send(b"OK")
+                
+                client_socket.close()
+                
+            except socket.timeout:
+                # Timeout is normal - allows checking running flag
+                continue
+            except Exception as e:
+                if running:  # Only print errors if we're still supposed to be running
+                    print(f"Server error: {e}")
+                
+    except Exception as e:
+        print(f"Failed to start RFID EXIT server: {e}")
+    finally:
+        server_socket.close()
+
+def initialize_esp32_exit():
+    """Initialize ESP32 EXIT connection and OLED display"""
+    global esp32_exit_ip
+    
+    print("🔍 Discovering ESP32 EXIT...")
+    
+    # Try to discover ESP32 EXIT IP
+    esp32_exit_ip = discover_esp32_exit_ip()
+    
+    if esp32_exit_ip:
+        print(f"✓ Found ESP32 EXIT at IP: {esp32_exit_ip}")
+        
+        # Test connectivity
+        if ping_esp32_exit(esp32_exit_ip):
+            print("✓ ESP32 EXIT is reachable")
+            
+            # Initialize OLED display
+            print("📺 Initializing ESP32 EXIT OLED display...")
+            if send_to_esp32_exit_oled("EXIT SCANNER\nReady for scan..."):
+                print("✓ ESP32 EXIT OLED initialized successfully")
+                return True
+            else:
+                print("⚠️  ESP32 EXIT OLED initialization failed")
+                return False
+        else:
+            print("✗ ESP32 EXIT is not reachable")
+            esp32_exit_ip = None
+            return False
+    else:
+        print(f"✗ ESP32 EXIT with MAC {ESP32_EXIT_MAC} not found")
+        print("   The ESP32 EXIT will be discovered when it connects")
+        return False
 
 def main():
-    # List available ports
-    available_ports = list_available_ports()
-    print("Available serial ports:")
-    for port in available_ports:
-        print(f"  {port}")
-
-    if SERIAL_PORT not in available_ports:
-        print(f"{SERIAL_PORT} not found. Update SERIAL_PORT or check connections.")
-        return
-
-    try:
-        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-        print(f"Connected to RFID scanner on {SERIAL_PORT}")
-    except serial.SerialException as e:
-        print(f"Connection failed: {e}")
-        return    # Initialize Serial OLED display
-    print("Initializing Serial OLED display...")
-    print(f"OLED Port: {OLED_SERIAL_PORT}")
-    print(f"OLED Baud Rate: {OLED_BAUD_RATE}")
+    """Main function - network-based RFID exit system"""
+    global running
+    print("=" * 60)
+    print("🚪 RFID Exit System (Network-based)")
+    print(f"   ESP32 EXIT MAC: {ESP32_EXIT_MAC}")
+    print(f"   Raspberry Pi MAC: {RASPBERRY_PI_MAC}")
+    print(f"   Listen Port: {ESP32_LISTEN_PORT}")
+    print(f"   OLED Port: {ESP32_OLED_PORT}")
+    print("=" * 60)
     
-    # Test OLED connection
-    test_result = send_to_serial_oled("EXIT SCANNER\nReady for scan...")
-    if test_result:
-        print("✓ Serial OLED initialized successfully")
-    else:
-        print("✗ Serial OLED initialization failed - continuing without OLED")
+    # Try to initialize ESP32 EXIT connection
+    initialize_esp32_exit()
     
-    print("Listening for RFID scans... (action='exit')")
+    # Start the RFID EXIT server in a separate thread
+    server_thread = threading.Thread(target=rfid_exit_server, daemon=True)
+    server_thread.start()
+    
+    print("\n🚀 Exit system started!")
+    print("   - ESP32 EXIT should send RFID data to this system")
+    print("   - OLED messages will be sent back to ESP32 EXIT")
+    print("   - Press Ctrl+C to stop")
+    
     try:
+        # Keep main thread alive and handle user input
         while True:
-            if ser.in_waiting:
-                rfid_data = ser.readline().decode('utf-8').strip()
-                if rfid_data:
-                    print(f"Scanned RFID: {rfid_data}")
-                    success = send_scan(rfid_data)
-                    if success:
-                        print("✓ Exit processed successfully")
-                    else:
-                        print("✗ Exit processing failed")
-            time.sleep(0.1)
+            time.sleep(1)
+            
+            # Optionally, you can add periodic health checks here
+            # if esp32_exit_ip and time.time() % 30 == 0:  # Every 30 seconds
+            #     ping_esp32_exit(esp32_exit_ip)
+            
     except KeyboardInterrupt:
-        print("\nStopped by user.")
-    finally:
-        if ser.is_open:
-            ser.close()
-            print("Serial port closed.")
+        print("\n🛑 Stopping RFID Exit System...")
+        running = False
+        
+        # Wait for server thread to finish
+        server_thread.join(timeout=2)
+        
+        print("✓ RFID Exit System stopped")
 
 if __name__ == '__main__':
     main()
