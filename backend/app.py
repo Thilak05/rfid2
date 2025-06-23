@@ -499,14 +499,20 @@ def get_rfid_status():
 try:
     reader_proc = subprocess.Popen([sys.executable, 'rfid_reader.py'])
     sender_proc = subprocess.Popen([sys.executable, 'rfid_sender.py'])
+    registration_proc = subprocess.Popen([sys.executable, 'rfid_registration.py'])
+    print("✅ Started RFID processes:")
+    print("   - Entry system (rfid_sender.py)")
+    print("   - Exit system (rfid_reader.py)") 
+    print("   - Registration system (rfid_registration.py)")
 except Exception as e:
     print(f"Warning: Could not start RFID processes: {e}")
     reader_proc = None
     sender_proc = None
+    registration_proc = None
 
 def cleanup():
     print("Terminating RFID subprocesses...")
-    for proc in [reader_proc, sender_proc]:
+    for proc in [reader_proc, sender_proc, registration_proc]:
         if proc and proc.poll() is None:
             proc.terminate()
             try:
