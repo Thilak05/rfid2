@@ -61,7 +61,24 @@ const unsigned long DISCOVERY_INTERVAL = 30000; // 30 seconds
 // Function declarations
 String discoverPiByMAC();
 bool testPythonServer(String ip);
+bool pingDevice(String ip);
+String getMACFromARP(String ip);
+bool verifyPiIdentity(String ip);
 void displayMessage(String message);
+String getWiFiStatusText(int status);
+
+String getWiFiStatusText(int status) {
+  switch(status) {
+    case WL_IDLE_STATUS: return "IDLE_STATUS";
+    case WL_NO_SSID_AVAIL: return "NO_SSID_AVAIL";
+    case WL_SCAN_COMPLETED: return "SCAN_COMPLETED";
+    case WL_CONNECTED: return "CONNECTED";
+    case WL_CONNECT_FAILED: return "CONNECT_FAILED";
+    case WL_CONNECTION_LOST: return "CONNECTION_LOST";
+    case WL_DISCONNECTED: return "DISCONNECTED";
+    default: return "UNKNOWN(" + String(status) + ")";
+  }
+}
 
 String discoverPiByMAC() {
   Serial.println("Discovering Raspberry Pi by MAC: " + String(raspberryPiMAC));
@@ -70,23 +87,144 @@ String discoverPiByMAC() {
   IPAddress localIP = WiFi.localIP();
   String networkBase = String(localIP[0]) + "." + String(localIP[1]) + "." + String(localIP[2]) + ".";
   
+  // First, do a quick scan for Python servers
+  Serial.println("Scanning for Flask servers on port " + String(pythonServerPort) + "...");
+  
   for (int i = 1; i <= 254; i++) {
     String testIP = networkBase + String(i);
     if (testIP == WiFi.localIP().toString()) continue;
     
+    // Check if Flask server is running
     if (testPythonServer(testIP)) {
-      Serial.println("Found Raspberry Pi at: " + testIP);
-      return testIP;
+      Serial.println("Found Flask server at: " + testIP);
+      displayMessage("Found server at:\n" + testIP + "\nVerifying...");
+      
+      // Try to verify this is our Pi by making a test request
+      if (verifyPiIdentity(testIP)) {
+        Serial.println("Verified Raspberry Pi at: " + testIP);
+        return testIP;
+      } else {
+        Serial.println("Server at " + testIP + " is not our target Pi");
+      }
     }
     
     if (i % 25 == 0) {
-      displayMessage("Scanning...\n" + testIP + "\nLooking for Pi...");
+      displayMessage("Scanning...\n" + testIP + "\nLooking for Flask...");
       yield();
     }
   }
   
-  Serial.println("Raspberry Pi not found");
+  Serial.println("Target Raspberry Pi not found on network");
   return "";
+}
+
+bool pingDevice(String ip) {
+  // Simple ping test using HTTP connection attempt
+  WiFiClient client;
+  client.setTimeout(500); // Short timeout for ping
+  
+  // Try to connect to any common port to see if device exists
+  bool connected = client.connect(ip.c_str(), 80) || 
+                   client.connect(ip.c_str(), 22) || 
+                   client.connect(ip.c_str(), pythonServerPort);
+  
+  if (connected) {
+    client.stop();
+    return true;
+  }
+  return false;
+}
+
+String getMACFromARP(String ip) {
+  // ESP32 doesn't have direct ARP table access like ESP8266
+  // We'll use a workaround by sending a ping and checking WiFi scan results
+  // This is a simplified approach - in production you might want to use more sophisticated methods
+  
+  // First, try to ping the device to populate ARP cache
+  WiFiClient client;
+  client.setTimeout(100);
+  if (client.connect(ip.c_str(), 80) || client.connect(ip.c_str(), 22) || client.connect(ip.c_str(), pythonServerPort)) {
+    client.stop();
+    delay(10); // Small delay to let ARP populate
+  }
+  
+  // Unfortunately, ESP32 Arduino doesn't provide direct ARP access
+  // For now, we'll use a fallback method: check if it's our known Pi MAC by testing the server
+  if (testPythonServer(ip)) {
+    // If the Python server responds, we'll assume it's the Pi for now
+    // This is not perfect but works for most home network scenarios
+    return String(raspberryPiMAC);
+  }
+  
+  return ""; // Unable to determine MAC
+}
+
+bool verifyPiIdentity(String ip) {
+  // Send a test request to verify this is our target Pi and get its MAC
+  HTTPClient http;
+  WiFiClient client;
+  
+  // First try the device info endpoint
+  String infoUrl = "http://" + ip + ":" + String(pythonServerPort) + "/api/device/info";
+  http.begin(client, infoUrl);
+  http.setTimeout(3000);
+  
+  int httpResponseCode = http.GET();
+  
+  if (httpResponseCode == 200) {
+    String response = http.getString();
+    http.end();
+    
+    Serial.println("Device info response: " + response);
+    
+    // Parse JSON to check MAC address
+    if (response.indexOf("\"device_type\":\"Raspberry Pi\"") != -1) {
+      // Extract MAC address from JSON response
+      int macStart = response.indexOf("\"mac_address\":\"") + 15;
+      if (macStart > 14) {
+        int macEnd = response.indexOf("\"", macStart);
+        if (macEnd > macStart) {
+          String deviceMAC = response.substring(macStart, macEnd);
+          deviceMAC.toUpperCase();
+          String targetMAC = String(raspberryPiMAC);
+          targetMAC.toUpperCase();
+          
+          Serial.println("Device MAC: " + deviceMAC + ", Target MAC: " + targetMAC);
+          
+          if (deviceMAC == targetMAC) {
+            Serial.println("Pi identity verified - MAC address matches!");
+            return true;
+          } else {
+            Serial.println("Pi MAC address does not match target");
+            return false;
+          }
+        }
+      }
+    }
+  }
+  
+  http.end();
+  
+  // Fallback: try root endpoint for basic identification
+  String url = "http://" + ip + ":" + String(pythonServerPort) + "/";
+  http.begin(client, url);
+  http.setTimeout(2000);
+  
+  httpResponseCode = http.GET();
+  
+  if (httpResponseCode > 0) {
+    String response = http.getString();
+    http.end();
+    
+    // Check if response contains expected Flask server content
+    if (response.indexOf("RFID Entry System") != -1 || response.indexOf("Flask Server") != -1) {
+      Serial.println("Pi identity verified - Flask server responding correctly (fallback method)");
+      return true;
+    }
+  }
+  
+  http.end();
+  return false;
 }
 
 bool testPythonServer(String ip) {
@@ -103,6 +241,11 @@ bool testPythonServer(String ip) {
 void setup() {
   // Initialize Serial for debugging (USB)
   Serial.begin(115200);
+  delay(1000); // Give serial time to initialize
+  
+  Serial.println();
+  Serial.println("=== ESP32 RFID Entry System ===");
+  Serial.println("Initializing...");
   
   // Initialize RFID Serial2 (GPIO16=RX, GPIO17=TX)
   rfidSerial.begin(RFID_BAUD_RATE, SERIAL_8N1, 16, 17);
@@ -118,19 +261,60 @@ void setup() {
   
   displayMessage("ESP32 RFID\nInitializing...");
   
-  // Connect to WiFi
+  // Print WiFi credentials for debugging
+  Serial.println("WiFi Configuration:");
+  Serial.println("SSID: " + String(ssid));
+  Serial.println("Password length: " + String(strlen(password)));
+  
+  // Connect to WiFi with timeout and better error handling
+  WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
-  displayMessage("Connecting WiFi...");
+  displayMessage("Connecting WiFi...\n" + String(ssid));
   
-  while (WiFi.status() != WL_CONNECTED) {
+  int wifiAttempts = 0;
+  const int maxWifiAttempts = 30; // 30 seconds timeout
+    while (WiFi.status() != WL_CONNECTED && wifiAttempts < maxWifiAttempts) {
     delay(1000);
+    wifiAttempts++;
     Serial.print(".");
+    Serial.print(" WiFi Status: ");
+    Serial.print(WiFi.status());
+    Serial.print(" (");
+    Serial.print(getWiFiStatusText(WiFi.status()));
+    Serial.println(")");
+    
+    // Update display every 5 seconds
+    if (wifiAttempts % 5 == 0) {
+      String statusText = getWiFiStatusText(WiFi.status());
+      displayMessage("Connecting WiFi...\nAttempt: " + String(wifiAttempts) + "/" + String(maxWifiAttempts) + "\nStatus: " + statusText);
+    }
   }
-  
-  Serial.println();
-  Serial.println("WiFi connected!");
+    if (WiFi.status() != WL_CONNECTED) {
+    Serial.println();
+    Serial.println("WiFi connection failed!");
+    Serial.println("Final WiFi Status: " + String(WiFi.status()) + " (" + getWiFiStatusText(WiFi.status()) + ")");
+    Serial.println("SSID: " + String(ssid));
+    Serial.println("Password length: " + String(strlen(password)));
+    Serial.println();
+    Serial.println("Common fixes:");
+    Serial.println("1. Check SSID and password");
+    Serial.println("2. Ensure 2.4GHz WiFi (ESP32 doesn't support 5GHz)");
+    Serial.println("3. Check WiFi signal strength");
+    Serial.println("4. Restart router if needed");
+    
+    displayMessage("WiFi FAILED!\nSSID: " + String(ssid) + "\nStatus: " + getWiFiStatusText(WiFi.status()));
+    while(1) delay(1000); // Stop here if WiFi fails
+  }
+    Serial.println();
+  Serial.println("WiFi connected successfully!");
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
+  Serial.print("MAC address: ");
+  Serial.println(WiFi.macAddress());
+  Serial.print("Signal strength (RSSI): ");
+  Serial.println(WiFi.RSSI());
+  Serial.print("Connected to SSID: ");
+  Serial.println(WiFi.SSID());
     // Setup web server for OLED messages
   server.on("/message", HTTP_POST, handleOLEDMessage);
   server.on("/", HTTP_GET, handleRoot);
@@ -279,7 +463,7 @@ void handleRoot() {
   html += "<li><strong>Denied:</strong> Access Denied\\nDoor Closed\\nNot Registered</li>";
   html += "<li><strong>Ready:</strong> ENTRY SCANNER\\nReady for scan...</li>";
   html += "</ul>";
-  html += "<p><strong>ESP32 MAC:</strong> E4:65:B8:27:73:08</p>";
+  html += "<p><strong>ESP32 MAC:</strong> " + WiFi.macAddress() + "</p>";
   html += "</body></html>";
   server.send(200, "text/html", html);
 }
