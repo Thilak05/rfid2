@@ -9,11 +9,36 @@ import subprocess
 import signal
 import sys
 import atexit
+import requests
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for React frontend
 
 DB_PATH = 'rfid_log.db'
+
+# ESP8266 Configuration
+ESP8266_DEVICES = {}  # Store MAC -> IP mapping for multiple devices
+
+def send_oled_message(message, device_mac=None):
+    """Send a message to ESP8266 OLED display"""
+    if device_mac and device_mac in ESP8266_DEVICES:
+        esp_ip = ESP8266_DEVICES[device_mac]
+    elif ESP8266_DEVICES:
+        esp_ip = list(ESP8266_DEVICES.values())[0]  # Use first available device
+    else:
+        print("No ESP8266 devices registered yet")
+        return False
+    
+    try:
+        response = requests.post(
+            f"http://{esp_ip}/message", 
+            data=message,
+            timeout=3
+        )
+        return response.status_code == 200
+    except Exception as e:
+        print(f"Error sending OLED message to {device_mac}: {e}")
+        return False
 
 def get_network_ip():
     """Get the network IP address of the machine"""
@@ -221,11 +246,20 @@ def validate_user():
 
 @app.route('/scan', methods=['POST'])
 def scan():
+    global ESP8266_DEVICES
+    
     data = request.json
     unique_id = data.get('unique_id')
     action = data.get('action')
+    device_mac = data.get('device_mac')
+    
+    # Register ESP8266 device by MAC address
+    if device_mac:
+        ESP8266_DEVICES[device_mac] = request.remote_addr
+        print(f"ESP8266 device registered: MAC {device_mac} -> IP {request.remote_addr}")
 
     if not unique_id or action not in ['entry', 'exit']:
+        send_oled_message("ERROR\nInvalid data", device_mac)
         return jsonify({'status': 'error', 'message': 'Invalid data'}), 400
 
     conn = sqlite3.connect(DB_PATH)
@@ -237,7 +271,10 @@ def scan():
 
     if not user:
         conn.close()
+        send_oled_message("Access Denied\nNot Registered\n" + unique_id, device_mac)
         return jsonify({'status': 'error', 'message': 'Access Denied: User not registered'}), 403
+
+    user_name = user[0]
 
     if action == 'entry':
         c.execute('''SELECT id FROM logs WHERE unique_id=? AND entry_time IS NOT NULL
@@ -247,13 +284,15 @@ def scan():
 
         if existing_entry:
             conn.close()
+            send_oled_message("Already Inside\n" + user_name, device_mac)
             return jsonify({'status': 'error', 'message': 'User already inside'}), 400
 
         c.execute('INSERT INTO logs (name, unique_id, entry_time, status) VALUES (?, ?, ?, ?)',
-                  (user[0], unique_id, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), 'inside'))
+                  (user_name, unique_id, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), 'inside'))
         conn.commit()
         conn.close()
-        return jsonify({'status': 'success', 'message': 'Entry logged', 'user_name': user[0]})
+        send_oled_message("Access Granted\nWelcome\n" + user_name, device_mac)
+        return jsonify({'status': 'success', 'message': 'Entry logged', 'user_name': user_name})
 
     elif action == 'exit':
         c.execute('''SELECT id FROM logs WHERE unique_id=? AND entry_time IS NOT NULL
@@ -266,10 +305,23 @@ def scan():
                       (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), 'outside', row[0]))
             conn.commit()
             conn.close()
-            return jsonify({'status': 'success', 'message': 'Exit logged', 'user_name': user[0]})
+            send_oled_message("Exit Logged\nGoodbye\n" + user_name, device_mac)
+            return jsonify({'status': 'success', 'message': 'Exit logged', 'user_name': user_name})
         else:
             conn.close()
+            send_oled_message("No Entry Found\n" + user_name, device_mac)
             return jsonify({'status': 'error', 'message': 'No entry found for exit'}), 404
+
+@app.route('/message', methods=['POST'])
+def send_message():
+    """Endpoint to manually send messages to ESP8266 OLED"""
+    data = request.get_data(as_text=True)
+    device_mac = request.args.get('mac')  # Optional MAC parameter
+    
+    if send_oled_message(data, device_mac):
+        return jsonify({'status': 'success', 'message': 'Message sent to OLED'})
+    else:
+        return jsonify({'status': 'error', 'message': 'Failed to send message to OLED'}), 500
 
 @app.route('/api/rfid/read', methods=['POST'])
 def read_rfid():
