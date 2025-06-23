@@ -16,17 +16,17 @@ CORS(app)  # Enable CORS for React frontend
 
 DB_PATH = 'rfid_log.db'
 
-# ESP8266 Configuration
-ESP8266_DEVICES = {}  # Store MAC -> IP mapping for multiple devices
+# ESP32/ESP8266 Configuration
+ESP_DEVICES = {}  # Store MAC -> IP mapping for multiple devices
 
 def send_oled_message(message, device_mac=None):
-    """Send a message to ESP8266 OLED display"""
-    if device_mac and device_mac in ESP8266_DEVICES:
-        esp_ip = ESP8266_DEVICES[device_mac]
-    elif ESP8266_DEVICES:
-        esp_ip = list(ESP8266_DEVICES.values())[0]  # Use first available device
+    """Send a message to ESP device OLED display"""
+    if device_mac and device_mac in ESP_DEVICES:
+        esp_ip = ESP_DEVICES[device_mac]
+    elif ESP_DEVICES:
+        esp_ip = list(ESP_DEVICES.values())[0]  # Use first available device
     else:
-        print("No ESP8266 devices registered yet")
+        print("No ESP devices registered yet")
         return False
     
     try:
@@ -246,17 +246,17 @@ def validate_user():
 
 @app.route('/scan', methods=['POST'])
 def scan():
-    global ESP8266_DEVICES
+    global ESP_DEVICES
     
     data = request.json
     unique_id = data.get('unique_id')
     action = data.get('action')
     device_mac = data.get('device_mac')
     
-    # Register ESP8266 device by MAC address
+    # Register ESP device by MAC address
     if device_mac:
-        ESP8266_DEVICES[device_mac] = request.remote_addr
-        print(f"ESP8266 device registered: MAC {device_mac} -> IP {request.remote_addr}")
+        ESP_DEVICES[device_mac] = request.remote_addr
+        print(f"ESP device registered: MAC {device_mac} -> IP {request.remote_addr}")
 
     if not unique_id or action not in ['entry', 'exit']:
         send_oled_message("ERROR\nInvalid data", device_mac)

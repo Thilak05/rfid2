@@ -1,17 +1,27 @@
 /*
- * ESP8266 Simple RFID Entry Scanner with OLED Display
+ * ESP32 WROOM Simple RFID Entry Scanner with OLED Display
  * 
- * This ESP8266 simply:
+ * This ESP32 simply:
  * 1. Scans RFID cards and sends UID to Python server
  * 2. Displays messages received from Python server on OLED
  * 3. Python server handles all logic (user verification, database, etc.)
+ *  * Pin Connections:
+ * RFID Reader (Serial):
+ *   GND -> GND
+ *   VCC -> 3.3V
+ *   TXD -> GPIO16 (RX2) - RFID data output
+ * 
+ * OLED SSD1306 (I2C):
+ *   GND -> GND
+ *   VCC -> 3.3V
+ *   SDA -> GPIO21 (SDA)
+ *   SCL -> GPIO22 (SCL)
  */
 
-#include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
-#include <ESP8266HTTPClient.h>
-#include <SPI.h>
-#include <MFRC522.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <HTTPClient.h>
+#include <HardwareSerial.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
@@ -25,19 +35,20 @@ const char* raspberryPiMAC = "D8:3A:DD:78:01:07"; // Raspberry Pi MAC address
 const int pythonServerPort = 5000;             // Flask server port
 String pythonServerIP = "";                   // Will be discovered by MAC address
 
-// RFID Configuration
-#define RST_PIN D3
-#define SS_PIN D4
-MFRC522 mfrc522(SS_PIN, RST_PIN);
+// RFID Serial Configuration (ESP32 has 3 hardware serial ports)
+HardwareSerial rfidSerial(2);  // Use Serial2 (GPIO16=RX, GPIO17=TX)
+#define RFID_BAUD_RATE 9600
 
-// OLED Configuration
+// OLED Configuration (ESP32 default I2C pins)
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 #define OLED_RESET -1
+#define OLED_SDA 21  // Default SDA pin for ESP32
+#define OLED_SCL 22  // Default SCL pin for ESP32
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 // Web Server for receiving OLED messages from Python
-ESP8266WebServer server(80);
+WebServer server(80);
 
 // Global variables
 String lastRFID = "";
@@ -50,6 +61,7 @@ const unsigned long DISCOVERY_INTERVAL = 30000; // 30 seconds
 // Function declarations
 String discoverPiByMAC();
 bool testPythonServer(String ip);
+void displayMessage(String message);
 
 String discoverPiByMAC() {
   Serial.println("Discovering Raspberry Pi by MAC: " + String(raspberryPiMAC));
@@ -86,9 +98,17 @@ bool testPythonServer(String ip) {
     return true;
   }
   return false;
+}
 
 void setup() {
-  Serial.begin(9600);
+  // Initialize Serial for debugging (USB)
+  Serial.begin(115200);
+  
+  // Initialize RFID Serial2 (GPIO16=RX, GPIO17=TX)
+  rfidSerial.begin(RFID_BAUD_RATE, SERIAL_8N1, 16, 17);
+  
+  // Initialize I2C with default pins for OLED
+  Wire.begin(OLED_SDA, OLED_SCL);
   
   // Initialize OLED
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
@@ -96,11 +116,7 @@ void setup() {
     while (1);
   }
   
-  displayMessage("ESP8266 RFID\nInitializing...");
-  
-  // Initialize SPI and RFID
-  SPI.begin();
-  mfrc522.PCD_Init();
+  displayMessage("ESP32 RFID\nInitializing...");
   
   // Connect to WiFi
   WiFi.begin(ssid, password);
@@ -123,13 +139,13 @@ void setup() {
   // Discover Raspberry Pi by MAC address
   pythonServerIP = discoverPiByMAC();
   if (pythonServerIP.length() > 0) {
-    piFound = true;
-    displayMessage("ENTRY SCANNER\nPi Found: " + pythonServerIP + "\nMAC: " + WiFi.macAddress());
+    piFound = true;    displayMessage("ENTRY SCANNER\nPi Found: " + pythonServerIP + "\nMAC: " + WiFi.macAddress());
   } else {
     displayMessage("ENTRY SCANNER\nPi Not Found\nMAC: " + WiFi.macAddress());
   }
   
-  Serial.println("ESP8266 RFID Entry System ready!");
+  Serial.println("ESP32 RFID Entry System ready!");
+  Serial.println("MAC Address: " + WiFi.macAddress());
 }
 
 void loop() {
@@ -148,41 +164,31 @@ void loop() {
       }
     }
   }
-  
-  // Check for RFID cards
-  if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial()) {
+  // Check for RFID cards from serial
+  if (rfidSerial.available()) {
+    String rfidUID = rfidSerial.readStringUntil('\n');
+    rfidUID.trim();
     
-    // Prevent duplicate scans
-    unsigned long currentTime = millis();
-    if (currentTime - lastScanTime < SCAN_DELAY) {
-      mfrc522.PICC_HaltA();
-      return;
+    if (rfidUID.length() > 0) {
+      // Prevent duplicate scans
+      unsigned long currentTime = millis();
+      if (currentTime - lastScanTime < SCAN_DELAY) {
+        return;
+      }
+      
+      // Prevent duplicate of same card
+      if (rfidUID == lastRFID && (currentTime - lastScanTime) < 5000) {
+        return;
+      }
+      
+      lastRFID = rfidUID;
+      lastScanTime = currentTime;
+      
+      Serial.println("RFID scanned: " + rfidUID);
+      
+      // Send to Python server and let it handle everything
+      sendRFIDToPython(rfidUID);
     }
-    
-    // Read RFID UID
-    String rfidUID = "";
-    for (byte i = 0; i < mfrc522.uid.size; i++) {
-      rfidUID += String(mfrc522.uid.uidByte[i], HEX);
-    }
-    rfidUID.toUpperCase();
-    
-    // Prevent duplicate of same card
-    if (rfidUID == lastRFID && (currentTime - lastScanTime) < 5000) {
-      mfrc522.PICC_HaltA();
-      return;
-    }
-    
-    lastRFID = rfidUID;
-    lastScanTime = currentTime;
-    
-    Serial.println("RFID scanned: " + rfidUID);
-    
-    // Send to Python server and let it handle everything
-    sendRFIDToPython(rfidUID);
-    
-    // Halt PICC
-    mfrc522.PICC_HaltA();
-    mfrc522.PCD_StopCrypto1();
   }
   
   delay(100);
@@ -255,11 +261,11 @@ void handleOLEDMessage() {
 
 void handleRoot() {
   String html = "<html><body>";
-  html += "<h1>ESP8266 RFID Entry Scanner</h1>";  html += "<p><strong>MAC:</strong> " + WiFi.macAddress() + "</p>";
+  html += "<h1>ESP32 WROOM RFID Entry Scanner</h1>";  html += "<p><strong>MAC:</strong> " + WiFi.macAddress() + "</p>";
   html += "<p><strong>IP:</strong> " + WiFi.localIP().toString() + "</p>";
   html += "<p><strong>Target Pi MAC:</strong> " + String(raspberryPiMAC) + "</p>";
   html += "<p><strong>Pi Status:</strong> " + (piFound ? ("Found - " + pythonServerIP) : "Not Found") + "</p>";
-  html += "<p><strong>Function:</strong> Simple RFID scanner + OLED display</p>";
+  html += "<p><strong>Function:</strong> ESP32 RFID scanner + OLED display</p>";
   html += "<hr>";
   html += "<h2>Test OLED Display</h2>";
   html += "<form method='post' action='/message'>";
@@ -273,6 +279,7 @@ void handleRoot() {
   html += "<li><strong>Denied:</strong> Access Denied\\nDoor Closed\\nNot Registered</li>";
   html += "<li><strong>Ready:</strong> ENTRY SCANNER\\nReady for scan...</li>";
   html += "</ul>";
+  html += "<p><strong>ESP32 MAC:</strong> E4:65:B8:27:73:08</p>";
   html += "</body></html>";
   server.send(200, "text/html", html);
 }
