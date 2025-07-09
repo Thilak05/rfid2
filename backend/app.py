@@ -19,10 +19,6 @@ DB_PATH = 'rfid_log.db'
 # ESP32/ESP8266 Configuration
 ESP_DEVICES = {}  # Store MAC -> IP mapping for multiple devices
 
-# Door Controller Configuration
-DOOR_CONTROLLER_MAC = "FC:B4:67:F0:44:18"  # UPDATE: Replace with your ESP32's actual MAC address
-DOOR_CONTROLLER_IP = None  # Will be discovered when door controller registers
-
 def send_oled_message(message, device_mac=None):
     """Send a message to ESP device OLED display"""
     if device_mac and device_mac in ESP_DEVICES:
@@ -349,11 +345,6 @@ def scan():
     if device_mac:
         ESP_DEVICES[device_mac] = request.remote_addr
         print(f"ESP device registered: MAC {device_mac} -> IP {request.remote_addr}")
-        
-        # Check if this is the door controller
-        if device_mac == DOOR_CONTROLLER_MAC:
-            discover_door_controller()
-            print(f"🚪 Door controller ESP32 registered!")
 
     if not unique_id or action not in ['entry', 'exit']:
         send_oled_message("ERROR\nInvalid data", device_mac)
@@ -389,19 +380,12 @@ def scan():
         conn.commit()
         conn.close()
         
-        # Send door unlock command for entry
-        door_success = send_door_command('entry')
-        
-        if door_success:
-            send_oled_message("Access Granted\nDoor Opened\nWelcome " + user_name, device_mac)
-        else:
-            send_oled_message("Access Granted\nWelcome\n" + user_name + "\n(Door Manual)", device_mac)
+        send_oled_message("Access Granted\nWelcome\n" + user_name, device_mac)
         
         return jsonify({
             'status': 'success', 
             'message': 'Entry logged', 
-            'user_name': user_name,
-            'door_opened': door_success
+            'user_name': user_name
         })
 
     elif action == 'exit':
@@ -416,19 +400,12 @@ def scan():
             conn.commit()
             conn.close()
             
-            # Send door unlock command for exit
-            door_success = send_door_command('exit')
-            
-            if door_success:
-                send_oled_message("Exit Logged\nDoor Opened\nGoodbye " + user_name, device_mac)
-            else:
-                send_oled_message("Exit Logged\nGoodbye\n" + user_name + "\n(Door Manual)", device_mac)
+            send_oled_message("Exit Logged\nGoodbye\n" + user_name, device_mac)
             
             return jsonify({
                 'status': 'success', 
                 'message': 'Exit logged', 
-                'user_name': user_name,
-                'door_opened': door_success
+                'user_name': user_name
             })
         else:
             conn.close()
@@ -530,49 +507,6 @@ def read_rfid():
 def get_rfid_status():
     global latest_rfid_scan
     return jsonify(latest_rfid_scan)
-
-def send_door_command(action):
-    """Send door control command to ESP32 solenoidal controller"""
-    if not DOOR_CONTROLLER_IP:
-        print("Door controller not available - IP not discovered")
-        return False
-    
-    try:
-        endpoint_map = {
-            'entry': '/unlock_entry',
-            'exit': '/unlock_exit', 
-            'lock': '/lock'
-        }
-        
-        endpoint = endpoint_map.get(action)
-        if not endpoint:
-            print(f"Invalid door action: {action}")
-            return False
-        
-        url = f"http://{DOOR_CONTROLLER_IP}{endpoint}"
-        print(f"Sending door command: {action} -> {url}")
-        
-        response = requests.post(url, timeout=3)
-        
-        if response.status_code == 200:
-            print(f"✅ Door {action} command successful")
-            return True
-        else:
-            print(f"❌ Door {action} command failed: {response.status_code}")
-            return False
-            
-    except Exception as e:
-        print(f"❌ Error sending door command {action}: {e}")
-        return False
-
-def discover_door_controller():
-    """Check if door controller ESP32 is registered"""
-    global DOOR_CONTROLLER_IP
-    if DOOR_CONTROLLER_MAC in ESP_DEVICES:
-        DOOR_CONTROLLER_IP = ESP_DEVICES[DOOR_CONTROLLER_MAC]
-        print(f"🚪 Door controller found: {DOOR_CONTROLLER_MAC} -> {DOOR_CONTROLLER_IP}")
-        return True
-    return False
 
 try:
     reader_proc = subprocess.Popen([sys.executable, 'rfid_reader.py'])

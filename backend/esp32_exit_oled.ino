@@ -458,13 +458,13 @@ void handleRoot() {
   html += "<hr>";
   html += "<h2>Test OLED Display</h2>";
   html += "<form method='post' action='/message'>";
-  html += "<textarea name='plain' rows='4' cols='40' placeholder='Exit Granted\\nDoor Opened\\nGoodbye User'></textarea><br><br>";
+  html += "<textarea name='plain' rows='4' cols='40' placeholder='Exit Granted\\nGoodbye User'></textarea><br><br>";
   html += "<input type='submit' value='Send to OLED'>";
   html += "</form>";
   html += "<hr>";
   html += "<h3>Example Messages:</h3>";
   html += "<ul>";
-  html += "<li><strong>Success:</strong> Exit Granted\\nDoor Opened\\nGoodbye John</li>";
+  html += "<li><strong>Success:</strong> Exit Granted\\nGoodbye John</li>";
   html += "<li><strong>Denied:</strong> Access Denied\\nNo Entry Found\\nUser</li>";
   html += "<li><strong>Ready:</strong> EXIT SCANNER\\nReady for scan...</li>";
   html += "</ul>";

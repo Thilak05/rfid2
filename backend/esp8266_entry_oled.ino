@@ -453,14 +453,14 @@ void handleRoot() {
   html += "<hr>";
   html += "<h2>Test OLED Display</h2>";
   html += "<form method='post' action='/message'>";
-  html += "<textarea name='plain' rows='4' cols='40' placeholder='Access Granted\\nDoor Opened\\nWelcome User'></textarea><br><br>";
+  html += "<textarea name='plain' rows='4' cols='40' placeholder='Access Granted\\nWelcome User'></textarea><br><br>";
   html += "<input type='submit' value='Send to OLED'>";
   html += "</form>";
   html += "<hr>";
   html += "<h3>Example Messages:</h3>";
   html += "<ul>";
-  html += "<li><strong>Success:</strong> Access Granted\\nDoor Opened\\nWelcome John</li>";
-  html += "<li><strong>Denied:</strong> Access Denied\\nDoor Closed\\nNot Registered</li>";
+  html += "<li><strong>Success:</strong> Access Granted\\nWelcome John</li>";
+  html += "<li><strong>Denied:</strong> Access Denied\\nNot Registered</li>";
   html += "<li><strong>Ready:</strong> ENTRY SCANNER\\nReady for scan...</li>";
   html += "</ul>";
   html += "<p><strong>ESP32 MAC:</strong> " + WiFi.macAddress() + "</p>";

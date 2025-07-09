@@ -124,11 +124,11 @@ def display_entry_result(access_granted, user_name="Unknown", error_reason=""):
     """Display entry result on ESP32 OLED"""
     if access_granted:
         # Access Granted - Entry successful
-        message = f"Access Granted\nDoor Opened\nWelcome {user_name}"
+        message = f"Access Granted\nWelcome {user_name}"
         print(f"✅ ENTRY: Access granted for {user_name}")
     else:
         # Access Denied - Entry failed
-        message = f"Access Denied\nDoor Closed\n{error_reason}"
+        message = f"Access Denied\n{error_reason}"
         print(f"❌ ENTRY: Access denied - {error_reason}")
     
     # Send to ESP32 OLED

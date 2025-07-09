@@ -128,14 +128,14 @@ def display_exit_result(access_granted, user_name="Unknown", error_reason=""):
     """Display exit result on ESP32 EXIT OLED"""
     if access_granted:
         # Access Granted - Exit successful
-        message = f"Exit Granted\nDoor Opened\nGoodbye {user_name}"
+        message = f"Exit Granted\nGoodbye {user_name}"
         print(f"✅ EXIT: Access granted for {user_name}")
     else:
         # Access Denied - Exit failed
         if "no entry found" in error_reason.lower():
             message = f"No Entry Found\nAccess Denied\n{user_name}"
         else:
-            message = f"Access Denied\nDoor Closed\n{error_reason}"
+            message = f"Access Denied\n{error_reason}"
         print(f"❌ EXIT: Access denied - {error_reason}")
     
     # Send to ESP32 EXIT OLED
