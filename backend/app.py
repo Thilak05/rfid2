@@ -20,7 +20,7 @@ DB_PATH = 'rfid_log.db'
 ESP_DEVICES = {}  # Store MAC -> IP mapping for multiple devices
 
 # Door Controller Configuration
-DOOR_CONTROLLER_MAC = "FC:B4:67:F0:44:18"  # MAC address of door controller ESP32
+DOOR_CONTROLLER_MAC = "FC:B4:67:F0:44:18"  # UPDATE: Replace with your ESP32's actual MAC address
 DOOR_CONTROLLER_IP = None  # Will be discovered when door controller registers
 
 def send_oled_message(message, device_mac=None):

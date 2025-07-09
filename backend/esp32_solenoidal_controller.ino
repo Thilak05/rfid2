@@ -22,7 +22,6 @@
  * Pin Connections:
  * - GPIO23: Relay control (LOW=Open, HIGH=Closed)
  * - GPIO2: Status LED (LOW=Closed, HIGH=Open)
- * - GPIO25: Optional buzzer
  */
 
 #include <WiFi.h>
@@ -36,7 +35,6 @@ const char* password = "9686940950";
 // Hardware Configuration
 #define RELAY_PIN 23              // GPIO23 controls the relay
 #define STATUS_LED_PIN 2          // Built-in LED for status
-#define BUZZER_PIN 25             // Optional buzzer
 #define DOOR_OPEN_TIME 5000       // 5 seconds door open time
 
 // Door States
@@ -58,10 +56,10 @@ WebServer server(80);
 void setupHardware();
 void connectWiFi();
 void setupWebServer();
+void registerWithServer();  // New function to register with Flask server
 void openDoor(String operation);
 void closeDoor();
 void updateDoorStatus();
-void playBeep(int count = 1);
 void handleUnlockEntry();
 void handleUnlockExit();
 void handleLock();
@@ -86,9 +84,15 @@ void setup() {
   setupHardware();
   connectWiFi();
   setupWebServer();
+  registerWithServer();  // Register with Flask server on startup
   
-  // Startup indication
-  playBeep(2);
+  // Startup indication - flash LED
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(STATUS_LED_PIN, HIGH);
+    delay(200);
+    digitalWrite(STATUS_LED_PIN, LOW);
+    delay(200);
+  }
   
   Serial.println();
   Serial.println("Door Controller Ready!");
@@ -117,7 +121,6 @@ void setupHardware() {
   // Initialize pins
   pinMode(RELAY_PIN, OUTPUT);
   pinMode(STATUS_LED_PIN, OUTPUT);
-  pinMode(BUZZER_PIN, OUTPUT);
   
   // Start with door closed (GPIO HIGH)
   closeDoor();
@@ -125,7 +128,6 @@ void setupHardware() {
   Serial.println("Hardware initialized:");
   Serial.println("  Relay Pin: GPIO" + String(RELAY_PIN) + " (LOW=Open, HIGH=Closed)");
   Serial.println("  Status LED: GPIO" + String(STATUS_LED_PIN));
-  Serial.println("  Buzzer: GPIO" + String(BUZZER_PIN));
   Serial.println("  Door initially: CLOSED");
 }
 
@@ -166,7 +168,6 @@ void connectWiFi() {
     
     // Keep LED on to indicate error
     digitalWrite(STATUS_LED_PIN, HIGH);
-    playBeep(5); // Error beeps
   }
 }
 
@@ -183,6 +184,40 @@ void setupWebServer() {
   
   server.begin();
   Serial.println("Web server started on port 80");
+}
+
+void registerWithServer() {
+  // Register this ESP32 door controller with the Flask server
+  Serial.println("Registering with Flask server...");
+  
+  // Try to find the Flask server on the network
+  // We'll try common Pi IP addresses or broadcast
+  String serverIPs[] = {
+    "192.168.1.100",  // Common Pi IP
+    "192.168.1.101", 
+    "192.168.1.102",
+    "192.168.1.103",
+    "192.168.1.104",
+    "192.168.1.105"
+  };
+  
+  for (int i = 0; i < 6; i++) {
+    String serverIP = serverIPs[i];
+    Serial.println("Trying server at: " + serverIP);
+    
+    WiFiClient client;
+    if (client.connect(serverIP.c_str(), 5000)) {
+      Serial.println("✅ Flask server found at: " + serverIP);
+      Serial.println("Door controller connection established!");
+      client.stop();
+      return;
+    }
+    
+    delay(500);  // Brief delay between attempts
+  }
+  
+  Serial.println("⚠ Could not find Flask server. Manual registration may be required.");
+  Serial.println("Make sure Flask server is running and accessible.");
 }
 
 void openDoor(String operation) {
@@ -202,13 +237,10 @@ void openDoor(String operation) {
   totalOperations++;
   if (operation == "entry") {
     entryCount++;
-    playBeep(1); // Single beep for entry
   } else if (operation == "exit") {
     exitCount++;
-    playBeep(2); // Double beep for exit
   } else {
     manualOperations++;
-    playBeep(1); // Single beep for manual
   }
   
   Serial.println("Door OPENED - auto-close in 5 seconds");
@@ -233,17 +265,7 @@ void updateDoorStatus() {
     unsigned long currentTime = millis();
     if (currentTime - doorOpenStartTime >= DOOR_OPEN_TIME) {
       closeDoor();
-      playBeep(1); // Short beep when auto-closing
     }
-  }
-}
-
-void playBeep(int count) {
-  for (int i = 0; i < count; i++) {
-    digitalWrite(BUZZER_PIN, HIGH);
-    delay(100);
-    digitalWrite(BUZZER_PIN, LOW);
-    if (i < count - 1) delay(200);
   }
 }
 
